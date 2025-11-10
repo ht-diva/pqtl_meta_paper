@@ -1,0 +1,309 @@
+---
+title: "coloc_report"
+author: "Dariush Ghasemi"
+format: html
+editor: visual
+---
+
+## Strategy
+
+-   for the results section:
+
+A)  number of colocalization
+B)  number of signals which could have colocalized
+C)  number of overlapping locus-seqid (so option 2 in your message)
+
+<!-- -->
+
+II) number of overlapping locus_seqid colocalizing for at least one of their independent snp
+III) number of pairs of unique locus-seqId-condsnp in locus_seqId which overlap
+IV) number of colocalization found
+
+<!-- -->
+
+7)  number of pairs on which we indeed tested coloc
+8)  number of pairs of conditional signals for which CS overlapped
+
+compare (1) vs (2). As we test (in the sense that we check the overlap of CS) all overlaping loci, this would mean: (3) vs (4) and (5) vs (6).
+
+-   in the methods, I think we need to also add (7), indeed (8).
+
+```{r path and inputs}
+#| echo: false
+
+path_cojo <- "/scratch/dariush.ghasemi/projects/pqtl_pipeline_finemap/results/meta_correct_sdy/cojo"
+
+path_coloc <- "/scratch/dariush.ghasemi/projects/pqtl_pipeline_finemap/results/meta_correct_sdy/coloc"
+path_coloc_master <- paste0(path_coloc, "/master_coloc.txt")
+path_coloc_combin <- paste0(path_coloc, "/combined_colocalization_results.csv")
+path_coloc_guide  <- paste0(path_coloc, "/chr21_coloc_pairwise_guide_table.tsv")
+
+```
+
+```{r (1)}
+#| echo: false
+
+find_n_coloc <- function(chr){
+  
+  # change path to guide file for each chromosome
+  coloc_res <- paste0(path_coloc, "/chr", chr, "_colocalization.table.all.tsv")
+  
+  data.table::fread(coloc_res, data.table = F) %>%
+    #dplyr::filter(PP.H4.abf > 0.8) %>%
+    dplyr::select(trait_a, trait_b, locus_a, locus_b) %>%
+    pivot_longer(
+      cols = c(trait_a, trait_b, locus_a, locus_b), 
+      names_to = c(".value", "group"), 
+      names_sep = "_"
+    ) %>%
+    distinct(trait, locus)
+  
+}
+
+#map_dfr(1:22, find_n_coloc)
+```
+
+```{r ch}
+
+suppressMessages(library(tidyverse))
+suppressMessages(library(GenomicRanges))
+
+
+master_file <- data.table::fread(path_coloc_master)
+
+
+find_overlap <- function(group_df){
+  
+  gr <- GenomicRanges::GRanges(
+    seqnames = group_df$chrom,
+    ranges = IRanges(start = group_df$start, end = group_df$end)
+  )
+  
+  overlaps <- findOverlaps(gr)
+  
+  overlap_pairs <- overlaps %>% 
+    as.data.frame() %>%
+    filter(queryHits != subjectHits) %>% # exclude self-overlaps regions
+    rowwise() %>%
+    mutate(pair = paste0(sort(c(queryHits, subjectHits)), collapse = "-")) %>%
+    #distinct(pair) %>%  # ensure unique unordered pairs (e.g., (1,4) == (4,1))
+    tidyr::separate(pair, into = c("a", "b"), sep = "-", convert = TRUE)
+  
+  # Extract GRanges coordinates
+  gr_df <- as.data.frame(group_df) %>%
+    tidyr::unite("locus", chrom, start, end, sep = "_", remove = T) %>%
+    dplyr::mutate(index = row_number()) %>%
+    dplyr::select(index, seqid, locus)
+
+  
+  # Join coordinates for both regions in each pair
+  overlap_coords <- overlap_pairs %>%
+    left_join(gr_df, by = c("a" = "index")) %>%
+    dplyr::rename(seqid_a = seqid, locus_a = locus) %>%
+    left_join(gr_df, by = c("b" = "index")) %>%
+    dplyr::rename(seqid_b = seqid, locus_b = locus) %>%
+    select(seqid_a:locus_b)
+  
+  #res <- data.frame(
+  #  chrom = unique(group_df$chrom),
+  #  total_loci = nrow(group_df),
+  #  shared_loci = nrow(overlap_coords)
+    #num_comparison = num_comparisons
+  #  )
+  
+  return(overlap_coords)
+  }
+
+```
+
+```{r guide table}
+#| echo: false
+
+
+coloc_guide <- data.table::fread(path_coloc_guide, data.table = F) %>% # read cloc guide table
+  mutate(across(c(t1_seqid, t2_seqid), ~ basename(.x)))
+
+coloc_guide %>% # extract seqid
+  mutate(check = t1_seqid == t2_seqid) %>% # if t1 and t2 are the same
+  count(check) # take summary table
+  
+  
+```
+
+```{r compute II }
+
+find_n_tested <- function(df){
+  
+  chr <- unique(df$chrom)
+  
+  # change path to guide file for each chromosome
+  coloc_res <- paste0(path_coloc, "/", chr, "_colocalization.table.all.tsv") %>%
+    data.table::fread()
+
+  res <- df %>% 
+    find_overlap() %>%
+    left_join(
+      coloc_res %>% select(trait_a:locus_b, PP.H4.abf),
+      join_by(seqid_a == trait_a, seqid_b == trait_b, locus_a, locus_b),
+      relationship = "many-to-many"
+      ) %>%
+    dplyr::filter(PP.H4.abf > 0.8) %>% # take significant colocalized pairs
+    distinct(seqid_a, seqid_b, locus_a, locus_b, .keep_all = T) 
+  
+  data.frame(
+    "chr" = chr, 
+    "n_tested" = sum(!is.na(res$PP.H4.abf)),
+    "n_overlap" = nrow(res)
+    )
+  
+  }
+
+```
+
+```{r show II }
+
+# No. overlapping loci by chromosome
+overlap_counts <- master_file %>%
+  #filter(chr == 21 | chr == 22) %>%
+  mutate(
+    seqid = basename(seqid),
+    file  = basename(path_rds)
+  ) %>%
+  select(seqid, file) %>%
+  tidyr::separate(file, into = c("SNP", "loc", "chrom", "start", "end"), sep = "_", convert = TRUE) %>%
+  distinct(seqid, chrom, start, end) %>% # unique seqid_locus
+  group_by(chrom) %>%
+  group_split() %>%
+  lapply(find_n_tested()) %>%
+  bind_rows() %>%
+  arrange(nchar(chr))
+
+
+print(overlap_counts)
+
+sum(overlap_counts$n_overlap)
+sum(overlap_counts$n_tested)
+
+```
+
+```{r III }
+
+# overlap of credible sets
+
+cojo_snps <- paste0(path_cojo, "/collected_credible_sets.csv") %>%
+  data.table::fread() %>%
+  dplyr::select(
+    seqid, locus, SNP
+  ) %>%
+  group_by(seqid, locus) %>%
+  summarize(
+    nsnp_cojo = n_distinct(SNP)
+  ) %>%
+  ungroup()
+
+
+find_n_cojo <- function(df){
+  
+  chr <- unique(df$chrom)
+  
+  res <- df %>% 
+    find_overlap() %>%
+    left_join(
+      cojo_snps %>% dplyr::rename(nsnp_cojo_a = nsnp_cojo),
+      join_by(seqid_a == seqid, locus_a == locus)
+    ) %>%
+    left_join(
+      cojo_snps %>% dplyr::rename(nsnp_cojo_b = nsnp_cojo),
+      join_by(seqid_b == seqid, locus_b == locus)
+    ) %>%
+    mutate(n_comb = nsnp_cojo_a * nsnp_cojo_b) %>%
+    distinct(seqid_a, seqid_b, locus_a, locus_b, .keep_all = T)
+  
+  data.frame(
+    "chr" = chr, 
+    "total_cojo_comb" = sum(res$n_comb)
+    )
+  return(res)
+}
+
+master_split <- master_file %>%
+  #filter(chr == 21 | chr == 22) %>%
+  mutate(
+    seqid = basename(seqid),
+    file  = basename(path_rds)
+  ) %>%
+  select(seqid, file) %>%
+  tidyr::separate(file, into = c("SNP", "loc", "chrom", "start", "end"), sep = "_", convert = TRUE) %>%
+  distinct(seqid, chrom, start, end) %>% # unique seqid_locus
+  group_by(chrom) %>%
+  group_split()
+
+cojo_combin <- master_split %>%
+  lapply(find_n_cojo) %>%
+  bind_rows()
+
+
+```
+
+```{r IV }
+# read combined coloc results
+res_coloc_pipe <- data.table::fread(path_coloc_combin)
+
+n_signif <- res_coloc_pipe %>% filter(PP.H4.abf > 0.8)
+
+
+```
+
+We found (I) 712,795 `r sum(overlap_counts$n_overlap)` pairs of loci had overlapping regions among the 7,870 regional associations. In the colocalization analysis using shared credible set variants approach, (II) 415,409 `r sum(overlap_counts$n_tested)` pair were tested and 407,416 `r sum(overlap_counts$n_overlap)` significantly colocalized.
+
+(III) 1,024,094 `r sum(cojo_combin$total_cojo_comb)` represents all pairwise SNP comparisons that could be made between the two overlapping loci for testing colocalization.
+
+In our analysis, we tested (IV) 594,463 `r nrow(res_coloc_pipe)` pairs for colocalization that (V) 582,245 pairs `r nrow(res_coloc_pipe)` significantly colocalized (PPH4 \> 0.8).
+
+(I) 712,795
+(II) 415,409
+(III) 1,024,094
+(IV) 594,463
+(V) 582,245
+
+We found 712,795 pairs of loci had overlapping regions among the 7,870 regional associations. In the colocalization analysis using shared credible set variants approach, 415,409 pair were tested and 407,416 significantly colocalized. For each overlapping pairs, we computed the total number of potential SNP–SNP colocalization comparisons as the product of the number of independent SNPs per locus (after COJO-based selection). This resulted in a total of 1,024,094 potential colocalization tests across overlapping loci. From these, 594,463 SNP–SNP pairs were tested using our colocalization approach. Among these, 582,245 pairs (98%) showed strong evidence of colocalization (posterior probability for shared causal variant, PP.H4 \> 0.8).
+
+```{r IQR for credible set}
+
+# count number variants in credible set of each COJO variant
+
+cs_nums <- master_file %>%
+  dplyr::filter(chr == 21) %>%
+  dplyr::mutate(
+    ncs = str_count(credible_set, ",") + 1 # remove credible set variants
+  )
+
+
+```
+
+Credible sets contain an average of `r summary(cs_nums$ncs)[[3]]` (`r summary(cs_nums$ncs)[[2]]` - `r summary(cs_nums$ncs)[[5]]`, IQR) variants.
+
+Credible sets contain an average of 3 (1-11, IQR) variants.
+
+```{r Epitope Effect report}
+
+lb_epitop_cojo <- data.table::fread(paste0(path_freez, "mapped_LB_gp_ann_va_ann_bl_ann_collapsed_hf_ann_vep_epitope_high_moderate_cojo.tsv"))
+
+# N. of cis loci
+n_cis_loci <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis")
+
+# N. of cis loci with epitope effect --> reported in the paper
+n_epitope_strict <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis", epitope_effect_cojo)
+n_epitope_loose  <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis", epitope_effect_cojo_all)
+
+# percentage
+p_epitope_loose <- nrow(n_epitope_loose)/nrow(n_cis_loci)
+p_epitope_strict <- nrow(n_epitope_strict)/nrow(n_cis_loci)
+
+nrow(n_cis_loci)
+nrow(n_epitope_loose)
+nrow(n_epitope_strict)
+
+```
+
+Among the `r nrow(n_cis_loci)` 1,784 cis-pQTLs, `r nrow(n_epitope_loose)` 319 (`r p_epitope_loose`%) (18%) had at least one independent association with a lead variant (or a strong proxy (r2\>0.8)) that were protein-altering variants, suggesting the possibility of an epitope effect (see details in Methods and Supplementary Table 6). Of these, `r nrow(n_epitope_strict)` 239 (`r p_epitope_strict`%) (13%) had PAVs for all independent association signals, so downstream analyses using these signals should be treated with caution.
