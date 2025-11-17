@@ -240,20 +240,23 @@ df <- data.frame(
   )
 )
 
-df <- df %>%
+df_reordered <- df[c(1,2,7,8,9,10,3,4,11,12,13,14,15,16,17,18,19,20,21,22),]
+
+df_reordered <- df_reordered %>%
   mutate(
     category = factor(category, levels = unique(category))  # optional, keeps x order too
   )
-df_totals <- df %>%
+df_totals <- df_reordered %>%
   group_by(category) %>%
   summarise(total = sum(count), .groups = "drop")
 
 thr <- 0.10
-labs_inside <- df %>% filter(count >= 100)
+labs_inside <- df_reordered %>% filter(count >= 100)
 
+df_reordered$group <- c(rep(1,6), rep(2,6), rep(3,6), rep(4,2))
 
 # Plot stacked bars
-ggplot(df, aes(x = category, y = count, fill = type)) +
+ggplot(df_reordered, aes(x = category, y = count, fill = type)) +
   geom_bar(stat = "identity", alpha = 0.5, aes(fill = type, color = type),width = 0.7) +
   geom_text(data= labs_inside,
             aes(label = count),
@@ -272,3 +275,47 @@ ggplot(df, aes(x = category, y = count, fill = type)) +
   theme(axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
         axis.title.y = element_text(size = 12),
         legend.position = "top")
+
+
+
+
+
+df_reordered <- df_reordered %>%
+  mutate(
+    category = factor(category, levels = unique(category)),
+    group    = factor(group, levels = sort(unique(group)))
+  )
+
+# recompute totals & inside labels AFTER adding `group`
+df_totals <- df_reordered %>%
+  group_by(group, category) %>%
+  summarise(total = sum(count), .groups = "drop")
+
+labs_inside <- df_reordered %>% filter(count >= 100)
+
+ggplot(df_reordered, aes(x = category, y = count, fill = type)) +
+  geom_bar(stat = "identity", alpha = 0.5, aes(color = type), width = 0.7) +
+  # inside labels
+  geom_text(data = labs_inside, aes(label = count),
+            position = position_stack(vjust = 0.5),
+            color = "black", size = 4, inherit.aes = TRUE) +
+  # totals on top
+  geom_text(data = df_totals,
+            aes(x = category, y = total, label = total),
+            vjust = -0.6, fontface = "bold", size = 4,
+            inherit.aes = FALSE) +
+  # colors
+  scale_fill_manual(values = c("Present in v5" = "#404080", "New in v7" = "#69b3a2"), name = "") +
+  scale_color_manual(values = c("Present in v5" = "#404080", "New in v7" = "#69b3a2"), guide = "none") +
+  # create SPACE between groups
+  facet_grid(~ group, scales = "free_x", space = "free_x") +
+  labs(x = "", y = "Number of signals") +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x  = element_text(size = 12, angle = 45, hjust = 1),
+    axis.title.y = element_text(size = 12),
+    legend.position = "top",
+    strip.text.x = element_blank(),           # hide facet strip labels
+    strip.background = element_blank(),
+    panel.spacing.x = unit(1, "cm")           # <-- space between groups
+  )
