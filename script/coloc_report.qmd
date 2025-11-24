@@ -285,19 +285,25 @@ Credible sets contain an average of `r summary(cs_nums$ncs)[[3]]` (`r summary(cs
 
 Credible sets contain an average of 3 (1-11, IQR) variants.
 
-```{r Epitope Effect report}
 
-lb_epitop_cojo <- data.table::fread(paste0(path_freez, "mapped_LB_gp_ann_va_ann_bl_ann_collapsed_hf_ann_vep_epitope_high_moderate_cojo.tsv"))
+
+
+```{r Epitope Effect report}
+path_freez <- "/exchange/healthds/pQTL/results/META_CHRIS_INTERVAL/Locus_breaker_cojo_frozen_version_1812024/"
+
+path_lb_epitop_cojo <- "mapped_LB_gp_ann_va_ann_bl_ann_collapsed_hf_ann_epitope_symbol_matching.tsv"
+
+lb_epitop_cojo <- paste0(path_freez, path_lb_epitop_cojo) %>% data.table::fread()
 
 # N. of cis loci
 n_cis_loci <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis")
 
 # N. of cis loci with epitope effect --> reported in the paper
-n_epitope_strict <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis", epitope_effect_cojo)
-n_epitope_loose  <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis", epitope_effect_cojo_all)
+n_epitope_strict <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis", cis_epitope_effect)
+n_epitope_loose  <- lb_epitop_cojo %>% dplyr::filter(cis_or_trans == "cis", cis_epitope_warning)
 
 # percentage
-p_epitope_loose <- nrow(n_epitope_loose)/nrow(n_cis_loci)
+p_epitope_loose  <- nrow(n_epitope_loose)/nrow(n_cis_loci)
 p_epitope_strict <- nrow(n_epitope_strict)/nrow(n_cis_loci)
 
 nrow(n_cis_loci)
@@ -306,4 +312,4 @@ nrow(n_epitope_strict)
 
 ```
 
-Among the `r nrow(n_cis_loci)` 1,784 cis-pQTLs, `r nrow(n_epitope_loose)` 319 (`r p_epitope_loose`%) (18%) had at least one independent association with a lead variant (or a strong proxy (r2\>0.8)) that were protein-altering variants, suggesting the possibility of an epitope effect (see details in Methods and Supplementary Table 6). Of these, `r nrow(n_epitope_strict)` 239 (`r p_epitope_strict`%) (13%) had PAVs for all independent association signals, so downstream analyses using these signals should be treated with caution.
+Among the `r nrow(n_cis_loci)` 1,784 cis-pQTLs, `r nrow(n_epitope_loose)` 700 (`r p_epitope_loose`%) (39%) had at least one independent association with a lead variant (or a strong proxy (r2\>0.8)) that were protein-altering variants, suggesting the possibility of an epitope effect (see details in Methods and Supplementary Table 4). Of these, `r nrow(n_epitope_strict)` 244 (`r p_epitope_strict`%) (14%) had PAVs for all independent association signals, so downstream analyses using these signals should be treated with caution.
