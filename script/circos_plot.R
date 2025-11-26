@@ -29,7 +29,7 @@ map_4join <- map %>%
 
 
 #-----------------#
-# list comminities
+# list communities
 hotspots <- list.files(path_base, pattern = "^\\d+_\\[\\d+, \\d+\\]")
 
 # Extract chromosome and start range using regex
@@ -73,8 +73,8 @@ append_mapping <- function(lb){
       across(c(snp_chr, phenotype_chr), ~ str_c("chr", .)),
       new_old = ifelse(
         new_somamer == TRUE, 
-        "Aptamers new in 7k assay version", 
-        "Aptamers already assessed in previous assay versions")
+        "New in 7k", 
+        "Present in 5k")
       )
 }
 
@@ -223,7 +223,7 @@ draw_circos <- function(lb){
   # Create a legend object
   lgd <- ComplexHeatmap::Legend(
     labels = names(group_palette),
-    title = "", # "Regional association"
+    title = "Protein",
     legend_gp = gpar(fill = group_palette),
     by_row = FALSE  # optional but silences warning
   )
@@ -232,7 +232,7 @@ draw_circos <- function(lb){
   ComplexHeatmap::draw(
     lgd,
     #x = unit(1, "npc") - unit(0, "mm"),
-    x = unit(8, "cm"),
+    x = unit(3, "cm"),
     y = unit(1, "mm"),
     just = c("bottom") #"right", 
   )
@@ -284,34 +284,13 @@ draw_circos <- function(lb){
 # test
 draw_circos(test_commun)
 
-
-# Initialize circos plot
-# Set parameters with minimal padding to avoid narrow-sector issue
-# circos.par(
-#   start.degree = 90, 
-#   gap.degree = 2,
-#   cell.padding = c(0.02, 0, 0.02, 0) # left, bottom, right, top
-#   )
-# 
-# circos.initialize(
-#   factors = chr_ranges$chr,
-#   xlim = chr_ranges[, c("min_pos", "max_pos")]
-#   )
-# 
-# # Add dummy track with chromosome labels
-# circos.trackPlotRegion(ylim = c(0, 1), panel.fun = function(x, y) {
-#   circos.text(CELL_META$xcenter, CELL_META$ylim[1] + mm_y(5),
-#               CELL_META$sector.index, cex = 0.6, facing = "bending.inside", niceFacing = TRUE)
-# }, bg.border = NA)
-
-#--------------------------------#
-
+# create and store plot for paper
 lapply(
   4,
   function(j){
     hotspot <- hotspots_sorted[j]
     hotspot_clean <- str_remove_all(hotspot, "\\[|\\]| ") %>% str_replace(",", "_")
-    plotname <- paste0("06-Aug-25_plt_circos_hotspot_chr", hotspot_clean, ".png")
+    plotname <- paste0("26-Nov-25_plt_circos_hotspot_chr", hotspot_clean, ".png")
   
     communities <- data.table::fread(paste0(path_base, hotspot, "/Hotspot_communities_connected.csv")) 
   
@@ -320,12 +299,5 @@ lapply(
     draw_circos(communities)
 
     dev.off()
-  #return(communities %>% dim())
 })
-
-#png("plt_circos_hotspot_chr17_5_10.png", width = 15.5, height = 15.5, units = "cm", res = 500)
-#pdf("plt_circos_hotspot_chr17_5_10.pdf", width = 7.5, height = 7.5)
-
-
-#dev.off()
 
