@@ -204,26 +204,59 @@ for(i in  1: length(V(g_est)$name)){
 
 mapping <- read_excel("/group/diangelantonio/users/alessia_mapelli/pQTL/INTERVAL/Hotspots and lonespots/New_coloc_results/supplementary_table_2.xlsx", sheet = 2)
 
-mapping <- mapping[, c("SeqId","chromosome","TSS", "start", "end", "UniProt_ID") ]
-colnames(mapping) <- c("SeqID","phenotype_chr","phenotype_pos", "phenotype_cis_start","phenotype_cis_end","UniProt_ID")
+mapping <- mapping[, c("SeqId","chromosome","TSS", "Target_Name", "UniProt_ID") ]
+mapping$target<-mapping$SeqId
+mapping$cis_end<-(mapping$TSS+500000)
+mapping$cis_start<-(mapping$TSS-500000)
+mapping$symbol <- mapping$Target_Name
 
-communities <- left_join(communities, mapping, by=c("SeqID", "UniProt_ID"), relationship = "many-to-many")
+minimap<-mapping[,c("target","symbol","chromosome","TSS","cis_start")]
+minimap$chromosome<-ifelse(minimap$chromosome=="X","23",minimap$chromosome)
+minimap$chromosome<-ifelse(minimap$chromosome=="Y","23",minimap$chromosome)
+table(minimap$chromosome)
+minimap$chromosome<-as.numeric(minimap$chromosome)
+table(table(minimap$target))
+minimap<-minimap[!duplicated(minimap$target),]
+minimap$study_id<-minimap$target
 
-communities$phenotype_chr<-ifelse(communities$phenotype_chr=="X","23",communities$phenotype_chr)
-communities$phenotype_chr<-ifelse(communities$phenotype_chr=="Y","23",communities$phenotype_chr)
-table(communities$phenotype_chr)
-communities$phenotype_chr<-as.numeric(communities$phenotype_chr)
+library(stringr)
+LB$START <- as.numeric(word(LB$locus_START_END_37, 2, sep = "_"))
+LB$START <- as.numeric(LB$START)
+LB$CHR <- as.numeric(LB$CHR)
+assoc2<-left_join(LB,minimap,by=c("SeqID"="study_id"))
 
-data_map_cum <- communities %>%
-  group_by(phenotype_chr) %>%
-  dplyr::summarise(max_bp_map = max(phenotype_cis_start)) %>%
-  mutate(bp_add_map = lag(cumsum(as.numeric(max_bp_map)), default = 0)) %>%
-  select(phenotype_chr, bp_add_map)
+data_map_cum <- assoc2|>
+  group_by(chromosome) |>
+  dplyr::summarise(max_bp_map = max(cis_start)) |>
+  mutate(bp_add_map = lag(cumsum(as.numeric(max_bp_map)), default = 0)) |>
+  select(chromosome, bp_add_map)
+
+gwas_data <- assoc2 |>
+  inner_join(data_map_cum, by = "chromosome") |>
+  mutate(bp_cum_map = cis_start+ bp_add_map)
+gwas_data$MLOG10P<-as.numeric(gwas_data$MLOG10P)
+
+df3=data.frame(chr=1:22,center=NA,stringsAsFactors=F)
+
+for(chr in 1:22){
+  
+  start=min(gwas_data$bp_cum_map[gwas_data$chromosome==chr],na.rm=T)
+  
+  end=max(gwas_data$bp_cum_map[gwas_data$chromosome==chr],na.rm=T)
+  
+  center=mean(c(start,end))
+  
+  df3[df3$chr==chr,"center"]=center
+  
+}
+
+communities <- left_join(communities, minimap, by=c("SeqID"="study_id"))
 
 communities <- communities %>%
-  inner_join(data_map_cum, by = "phenotype_chr") %>%
-  mutate(bp_cum_map = phenotype_cis_start+ bp_add_map)
+  inner_join(data_map_cum, by = "chromosome") %>%
+  mutate(bp_cum_map = cis_start+ bp_add_map)
 
+View(communities)
 
 library(stringr)
 communities_adam_plot <- communities %>%
@@ -244,21 +277,6 @@ communities_adam_plot <- communities_adam_plot %>%
     group = factor(group, levels = c("1", "Not connected"))
   )
 
-df_chr_pos=data.frame(chr=1:22,center=NA,stringsAsFactors=F)
-
-for(chr in 1:22){
-  
-  start=min(communities$bp_cum_map[communities$phenotype_chr==chr],na.rm=T)
-  
-  end=max(communities$bp_cum_map[communities$phenotype_chr==chr],na.rm=T)
-  
-  center=mean(c(start,end))
-  
-  df_chr_pos[df_chr_pos$chr==chr,"center"]=center
-  
-}
-
-df_chr_pos <- na.omit(df_chr_pos)
 
 library(ggplot2)
 library(ggrepel)
@@ -291,7 +309,7 @@ ggplot(
     name = "Signal Type"   # <- Legend title for shapes
   ) +
   scale_x_continuous(labels = label_number()) +
-  scale_y_continuous(breaks=df_chr_pos$center,labels=df_chr_pos$chr)+
+  scale_y_continuous(breaks=df3$center,labels=c(1:22))+
   labs(
     x = "pQTL positions",
     y = "Coding gene position"
@@ -335,6 +353,12 @@ label_data <- subset(
   cis_or_trans == "cis" & !is.na(POS) & !is.na(bp_cum_map)
 )
 
+community_names <- communities_adam_plot %>%
+  count(group, SNPID, name = "n") %>%        # count how often each SNPID appears per group
+  group_by(group) %>%
+  slice_max(n, n = 1, with_ties = FALSE) %>% # keep SNPID with highest count in each group
+  ungroup()
+
 ggplot(
   communities_adam_plot,
   aes(x = POS, y = bp_cum_map, color = group, shape = cis_or_trans)
@@ -352,14 +376,14 @@ ggplot(
   scale_color_manual(
     values = c("1" = gg_color_hue(1), "Not connected" = "gray"),
     name = "Communities",
-    labels = c("1" = "Group 1", "Not connected" = "Unconnected nodes")
+    labels = c("1" = "2:27730940:C:T", "Not connected" = "Not colocalized signals")
   ) +
   scale_shape_manual(
     values = c("cis" = 16, "trans" = 15),
     name = "Signal Type"
   ) +
   scale_x_continuous(labels = mb_format) +
-  scale_y_continuous(breaks=df_chr_pos$center,labels=df_chr_pos$chr) +
+  scale_y_continuous(breaks=df3$center,labels=c(1:22)) +
   labs(
     x = "\npQTL positions (Mb)",
     y = "\nCoding gene position (Mb)\n"
@@ -375,5 +399,5 @@ ggplot(
     legend.spacing.x = unit(2, "cm")
   )
 
-plot_name <- paste(foldname, "/Adams_plot_",type_of_clustering,"_new_6.png", sep="")
+plot_name <- paste(foldname, "/Adams_plot_",type_of_clustering,"_new_7.png", sep="")
 ggsave(plot_name, width = 30, height = 20, units = "cm")
