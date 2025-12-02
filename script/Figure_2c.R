@@ -204,26 +204,57 @@ for(i in  1: length(V(g_est)$name)){
 
 mapping <- read_excel("/group/diangelantonio/users/alessia_mapelli/pQTL/INTERVAL/Hotspots and lonespots/New_coloc_results/supplementary_table_2.xlsx", sheet = 2)
 
-mapping <- mapping[, c("SeqId","chromosome","TSS", "start", "end", "UniProt_ID") ]
-colnames(mapping) <- c("SeqID","phenotype_chr","phenotype_pos", "phenotype_cis_start","phenotype_cis_end","UniProt_ID")
+mapping <- mapping[, c("SeqId","chromosome","TSS", "Target_Name", "UniProt_ID") ]
+mapping$target<-mapping$SeqId
+mapping$cis_end<-(mapping$TSS+500000)
+mapping$cis_start<-(mapping$TSS-500000)
+mapping$symbol <- mapping$Target_Name
 
-communities <- left_join(communities, mapping, by=c("SeqID", "UniProt_ID"), relationship = "many-to-many")
+minimap<-mapping[,c("target","symbol","chromosome","TSS","cis_start")]
+minimap$chromosome<-ifelse(minimap$chromosome=="X","23",minimap$chromosome)
+minimap$chromosome<-ifelse(minimap$chromosome=="Y","23",minimap$chromosome)
+table(minimap$chromosome)
+minimap$chromosome<-as.numeric(minimap$chromosome)
+table(table(minimap$target))
+minimap<-minimap[!duplicated(minimap$target),]
+minimap$study_id<-minimap$target
 
-communities$phenotype_chr<-ifelse(communities$phenotype_chr=="X","23",communities$phenotype_chr)
-communities$phenotype_chr<-ifelse(communities$phenotype_chr=="Y","23",communities$phenotype_chr)
-table(communities$phenotype_chr)
-communities$phenotype_chr<-as.numeric(communities$phenotype_chr)
+library(stringr)
+LB$START <- as.numeric(word(LB$locus_START_END_37, 2, sep = "_"))
+LB$START <- as.numeric(LB$START)
+LB$CHR <- as.numeric(LB$CHR)
+assoc2<-left_join(LB,minimap,by=c("SeqID"="study_id"))
 
-data_map_cum <- communities %>%
-  group_by(phenotype_chr) %>%
-  dplyr::summarise(max_bp_map = max(phenotype_cis_start)) %>%
-  mutate(bp_add_map = lag(cumsum(as.numeric(max_bp_map)), default = 0)) %>%
-  select(phenotype_chr, bp_add_map)
+data_map_cum <- assoc2|>
+  group_by(chromosome) |>
+  dplyr::summarise(max_bp_map = max(cis_start)) |>
+  mutate(bp_add_map = lag(cumsum(as.numeric(max_bp_map)), default = 0)) |>
+  select(chromosome, bp_add_map)
+
+gwas_data <- assoc2 |>
+  inner_join(data_map_cum, by = "chromosome") |>
+  mutate(bp_cum_map = cis_start+ bp_add_map)
+gwas_data$MLOG10P<-as.numeric(gwas_data$MLOG10P)
+
+df3=data.frame(chr=1:22,center=NA,stringsAsFactors=F)
+
+for(chr in 1:22){
+  
+  start=min(gwas_data$bp_cum_map[gwas_data$chromosome==chr],na.rm=T)
+  
+  end=max(gwas_data$bp_cum_map[gwas_data$chromosome==chr],na.rm=T)
+  
+  center=mean(c(start,end))
+  
+  df3[df3$chr==chr,"center"]=center
+  
+}
+
+communities <- left_join(communities, minimap, by=c("SeqID"="study_id"))
 
 communities <- communities %>%
-  inner_join(data_map_cum, by = "phenotype_chr") %>%
-  mutate(bp_cum_map = phenotype_cis_start+ bp_add_map)
-
+  inner_join(data_map_cum, by = "chromosome") %>%
+  mutate(bp_cum_map = cis_start+ bp_add_map)
 
 library(stringr)
 communities_adam_plot <- communities %>%
@@ -244,22 +275,6 @@ communities_adam_plot <- communities_adam_plot %>%
     group = factor(group)
   ) %>%
   rename(Communities=group)
-
-df_chr_pos=data.frame(chr=1:22,center=NA,stringsAsFactors=F)
-
-for(chr in 1:22){
-  
-  start=min(communities$bp_cum_map[communities$phenotype_chr==chr],na.rm=T)
-  
-  end=max(communities$bp_cum_map[communities$phenotype_chr==chr],na.rm=T)
-  
-  center=mean(c(start,end))
-  
-  df_chr_pos[df_chr_pos$chr==chr,"center"]=center
-  
-}
-
-df_chr_pos <- na.omit(df_chr_pos)
 
 library(ggplot2)
 library(ggrepel)
@@ -287,7 +302,7 @@ ggplot(
     name = "Signal Type"   # <- Legend title for shapes
   ) +
   scale_x_continuous(labels = label_number()) +
-  scale_y_continuous(breaks=df_chr_pos$center,labels=df_chr_pos$chr)+
+  scale_y_continuous(breaks=df3$center,labels=c(1:22))+
   labs(
     x = "pQTL positions",
     y = "Coding gene position"
@@ -326,10 +341,16 @@ library(scales)
 
 mb_format <- function(x) sprintf("%.0f Mb", x / 1e6)
 
-label_data <- subset(
-  communities_adam_plot,
-  cis_or_trans == "cis" & !is.na(POS) & !is.na(bp_cum_map)
-)
+labels_df <- communities_adam_plot %>%
+  filter(
+    cis_or_trans == "cis",
+    !is.na(start),
+    !is.na(bp_cum_map),
+    !is.na(HARMONIZED_GENE_NAME)
+  ) %>%
+  arrange(bp_cum_map) %>%                     # "first signal" = smallest bp_cum_map
+  distinct(HARMONIZED_GENE_NAME, .keep_all = TRUE)
+
 
 ggplot(
   communities_adam_plot,
@@ -337,7 +358,7 @@ ggplot(
 ) +
   geom_point(size = 3) +
   geom_text_repel(
-    data = subset(communities_adam_plot, cis_or_trans == "cis" & !is.na(start) & !is.na(bp_cum_map)),
+    data = labels_df,
     aes(label = HARMONIZED_GENE_NAME),
     size = 4,
     max.overlaps = 70,
@@ -350,7 +371,7 @@ ggplot(
     name = "Signal Type"
   ) +
   scale_x_continuous(labels = mb_format) +
-  scale_y_continuous(breaks=df_chr_pos$center,labels=df_chr_pos$chr) +
+  scale_y_continuous(breaks=df3$center,labels=c(1:22))+
   labs(
     x = "\npQTL positions (Mb)",
     y = "\nCoding gene position (Mb)\n"
@@ -370,26 +391,46 @@ plot_name <- paste(foldname, "/Adams_plot_",type_of_clustering,"_new_6.png", sep
 ggsave(plot_name, width = 30, height = 20, units = "cm")
 
 
+community_names <- communities_adam_plot %>%
+  count(Communities, SNPID, name = "n") %>%        # count how often each SNPID appears per group
+  group_by(Communities) %>%
+  slice_max(n, n = 1, with_ties = FALSE) %>% # keep SNPID with highest count in each group
+  ungroup()
+
 communities_res <- communities_adam_plot %>%
   mutate(
     Communities_recode = case_when(
-      Communities %in% c("5","6","8") ~ Communities,     # keep 5, 6, 8
-      Communities == "Not connected"  ~ "Not connected", # separate label
-      TRUE ~ "Others"                                   # everything else
+      Communities== "5" ~ "12:7242740:C:G",  
+      Communities== "6" ~ "12:7170336:A:G",  
+      Communities== "8" ~ "12:7242204:C:T",  
+      Communities == "Not connected"  ~ "Not colocalized signals",
+      TRUE ~ "Others"                                   
     ),
     Communities_recode = factor(
       Communities_recode,
-      levels = c("5","6","8","Others","Not connected")
+      levels = c("12:7242740:C:G","12:7170336:A:G","12:7242204:C:T","Others","Not colocalized signals")
     )
   )
 
+
 community_colors <- c(
-  "5" = gg_color_hue(3)[1],           # blue
-  "6" = gg_color_hue(3)[2],           # green
-  "8" = gg_color_hue(3)[3],           # red
+  "12:7242740:C:G" = gg_color_hue(3)[1],           # blue
+  "12:7170336:A:G" = gg_color_hue(3)[2],           # green
+  "12:7242204:C:T" = gg_color_hue(3)[3],           # red
   "Others" = "darkgrey",
-  "Not connected" = "lightgrey"
+  "Not colocalized signals" = "lightgrey"
 )
+
+labels_df <- communities_res %>%
+  filter(
+    cis_or_trans == "cis",
+    !is.na(start),
+    !is.na(bp_cum_map),
+    !is.na(HARMONIZED_GENE_NAME)
+  ) %>%
+  arrange(bp_cum_map) %>%                     # "first signal" = smallest bp_cum_map
+  distinct(HARMONIZED_GENE_NAME, .keep_all = TRUE)
+
 
 library(ggplot2)
 library(ggrepel)
@@ -404,18 +445,12 @@ ggplot(
   geom_point(size = 3) +
   
   geom_text_repel(
-    data = subset(communities_res, cis_or_trans == "cis" & !is.na(start) & !is.na(bp_cum_map)),
+    data = labels_df,
     aes(label = HARMONIZED_GENE_NAME),
     size = 4,
-    max.overlaps = Inf,             # allow more freedom to move
-    force = 5,                      # stronger repulsion (default = 1)
-    force_pull = 0.5,               # prevents labels collapsing into center
+    max.overlaps = 70,
     nudge_y = 0.07 * diff(range(communities_res$bp_cum_map, na.rm = TRUE)),
-    segment.size = 0.5,             # clear connecting lines
-    segment.color = "grey50",
-    box.padding = 0.5,              # more spacing around label boxes
-    point.padding = 0.3,
-    min.segment.length = 0,         # always draw line
+    direction = "y",
     vjust = 0
   )+
   scale_color_manual(values = community_colors, name = "Communities") +
@@ -423,7 +458,7 @@ ggplot(
   scale_shape_manual(values = c("cis" = 16, "trans" = 15), name = "Signal Type") +
   
   scale_x_continuous(labels = mb_format) +
-  scale_y_continuous(breaks=df_chr_pos$center, labels=df_chr_pos$chr) +
+  scale_y_continuous(breaks=df3$center,labels=c(1:22))+
   
   labs(
     x = "\npQTL positions (Mb)",
@@ -435,6 +470,7 @@ ggplot(
     axis.title = element_text(size = 13),
     axis.text = element_text(size = 12),
     legend.position = "bottom",
+    legend.box = "vertical",
     legend.key.size = unit(1, "cm"),
     legend.text = element_text(size = 14, face = "bold"),
     legend.title = element_text(size = 14),
@@ -447,23 +483,31 @@ ggsave(
 )
 
 
-communities_res <- communities_adam_plot %>%
-  filter( Communities %in% c("5","6","8")) %>%
-  mutate(Communities_recode = factor(
-    Communities,
-    levels = c("5","6","8")
-  ))
-community_colors <- c(
-  "5" = gg_color_hue(3)[1],           # blue
-  "6" = gg_color_hue(3)[2],           # green
-  "8" = gg_color_hue(3)[3]           # red
-)
+communities_res <- communities_res %>%
+  filter( Communities_recode %in% c("12:7242740:C:G","12:7170336:A:G","12:7242204:C:T"))
 
+labels_df <- communities_res %>%
+  filter(
+    cis_or_trans == "cis",
+    !is.na(start),
+    !is.na(bp_cum_map),
+    !is.na(HARMONIZED_GENE_NAME)
+  ) %>%
+  arrange(bp_cum_map) %>%                     # "first signal" = smallest bp_cum_map
+  distinct(HARMONIZED_GENE_NAME, .keep_all = TRUE)
+
+labels_df_trans_HG <- communities %>%
+  filter(Target_Name %in% c("C4a", "C1q"))
+
+labels_df_trans <- communities_res %>%
+  filter(HARMONIZED_GENE_NAME %in% labels_df_trans_HG$HARMONIZED_GENE_NAME)
+
+labels_df <- rbind(labels_df,labels_df_trans )
 library(ggplot2)
 library(ggrepel)
 library(scales)
 
-mb_format <- function(x) sprintf("%.0f Mb", x / 1e6)
+mb_format <- function(x) sprintf("%.2f Mb", x / 1e6)
 
 ggplot(
   communities_res,
@@ -472,18 +516,12 @@ ggplot(
   geom_point(size = 3) +
   
   geom_text_repel(
-    data = subset(communities_res, cis_or_trans == "cis" & !is.na(start) & !is.na(bp_cum_map)),
+    data = labels_df,
     aes(label = HARMONIZED_GENE_NAME),
     size = 4,
-    max.overlaps = Inf,             # allow more freedom to move
-    force = 5,                      # stronger repulsion (default = 1)
-    force_pull = 0.5,               # prevents labels collapsing into center
+    max.overlaps = 70,
     nudge_y = 0.07 * diff(range(communities_res$bp_cum_map, na.rm = TRUE)),
-    segment.size = 0.5,             # clear connecting lines
-    segment.color = "grey50",
-    box.padding = 0.5,              # more spacing around label boxes
-    point.padding = 0.3,
-    min.segment.length = 0,         # always draw line
+    direction = "y",
     vjust = 0
   )+
   scale_color_manual(values = community_colors, name = "Communities") +
@@ -491,7 +529,7 @@ ggplot(
   scale_shape_manual(values = c("cis" = 16, "trans" = 15), name = "Signal Type") +
   
   scale_x_continuous(labels = mb_format) +
-  scale_y_continuous(breaks=df_chr_pos$center, labels=df_chr_pos$chr) +
+  scale_y_continuous(breaks=df3$center,labels=c(1:22))+
   
   labs(
     x = "\npQTL positions (Mb)",
@@ -504,6 +542,7 @@ ggplot(
     axis.text = element_text(size = 12),
     legend.position = "bottom",
     legend.key.size = unit(1, "cm"),
+    legend.box = "vertical",
     legend.text = element_text(size = 14, face = "bold"),
     legend.title = element_text(size = 14),
     legend.spacing.x = unit(2, "cm")
@@ -513,8 +552,3 @@ ggsave(
   paste0(foldname, "/Adams_plot_", type_of_clustering, "_new_8.png"),
   width = 30, height = 20, units = "cm"
 )
-
-
-
-
-
