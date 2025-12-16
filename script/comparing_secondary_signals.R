@@ -17,15 +17,23 @@ st3_lb  <- read_excel(path_st3_loci)
 st4_cojo <- read_excel(path_st4_cojo, sheet = NULL, range = NULL)
 
 
-res <- st4_cojo %>%
+#-------------------#
+# rename columns in COJO results
+st4_cojo <- st4_cojo %>%
   dplyr::rename(
     seqid = SeqID,
     locus = locus_START_END_37,
     location = cis_or_trans,
     status = uniprot_new_in_somascan7k_vs5k
-  ) %>%
+  ) #%>% arrange(seqid, locus) %>% print(n=100)
+
+# summarizing COJO results per locus
+res <- st4_cojo %>%
   group_by(seqid) %>%
-  dplyr::mutate(nloci = n_distinct(locus)) %>% # Count number of loci per seqid
+  dplyr::mutate(
+    nloci = n_distinct(locus),    # Count number of loci per seqid
+    ncis_pqtl = str_count(location, "cis") #%>% replace_na(0),
+    ) %>%
   group_by(seqid, locus) %>%
   dplyr::mutate(
     ncojo = n_distinct(SNPID), # No. of COJO SNPs per seqid-locus
@@ -33,9 +41,19 @@ res <- st4_cojo %>%
     signal = ifelse(ncojo > 1, "secondary", "primary") %>% factor(levels = c("primary", "secondary")),
     status = ifelse(status, "new", "old") %>% factor(levels = c("old", "new"))
     ) %>%
-  select(seqid, locus, location, status, nloci, ncojo, signal) %>%
+  select(seqid, locus, location, status, nloci, ncis_pqtl, ncojo, signal) %>%
   ungroup() %>% 
   distinct()
+
+
+map_npqtls <- st4_cojo %>%
+  summarise(
+    nloci = n_distinct(locus),
+    npqtl = n(),
+    ncis_pqtl = sum(location == "cis"),        # because 'status' is logical
+    #status = paste0(unique(status), collapse = ","),
+    .by = seqid
+    ) #%>% filter(seqid == "seq.10365.132")
 
 
 # appending Z-scores of index variants
@@ -58,25 +76,81 @@ map_cojo <- st2_map %>%
     INTERVAL_CV_batch1,
     INTERVAL_CV_batch2,
     CHRIS_LOD,
-    CHRIS_CV,
+    CHRIS_CV
     ) %>%
   distinct() %>%
   right_join(res, join_by(seqid)) %>%
   filter(location == "cis")
 
 
+# merge maping with locus breaker results 
 lb_pathway <- st2_map %>%
   dplyr::select(
     seqid = SeqID,
-    pathway = `Secretion pathway`
+    concentration = Blood_conc_pgL,
+    pathway = `Secretion pathway`,
+    INTERVAL_Percent_under_LOD_batch1,
+    INTERVAL_Percent_under_LOD_batch2,
+    CHRIS_Percent_under_LOD
   ) %>%
-  summarise(func_prot = paste0(unique(pathway), collapse = ","), .by = seqid) %>%
+  summarise(
+    #nseq = n(),
+    # For qunat traits, we average feature per seqid
+    # For categorical, we collapse unique values per seqid
+    func_prot = paste0(unique(pathway), collapse = ","),
+    conc_miss = paste0(unique(is.na(concentration)), collapse = ","),
+    conc_prot = mean(concentration, na.rm = T),
+    conc_prot_ln = log(conc_prot), # taking natural logarithm
+    conc_prot_log = log10(conc_prot),
+    conc_prot_log2 = log2(conc_prot),
+    pblod_int1  = mean(INTERVAL_Percent_under_LOD_batch1, na.rm = T),
+    pblod_int2  = mean(INTERVAL_Percent_under_LOD_batch2, na.rm = T),
+    pblod_chris = mean(CHRIS_Percent_under_LOD, na.rm = T),
+    .by = seqid
+    ) %>%
+  mutate(
+    pblod_int1  = replace_na(pblod_int1, 0),
+    pblod_int2  = replace_na(pblod_int2, 0),
+    pblod_chris = replace_na(pblod_chris, 0),
+    ilod_int1 = ifelse(pblod_int1 > 20, "iLOD>20%", "iLOD<20%") %>% factor(levels = c("iLOD<20%", "iLOD>20%")),
+    ilod_int2 = ifelse(pblod_int2 > 20, "iLOD>20%", "iLOD<20%") %>% factor(levels = c("iLOD<20%", "iLOD>20%")),
+    ilod_chris = ifelse(pblod_chris > 20, "iLOD>20%", "iLOD<20%") %>% factor(levels = c("iLOD<20%", "iLOD>20%"))
+  ) %>%
   right_join(res, join_by(seqid)) %>%
+  # remove loci corresponding to a seqid with multiple locations
+  # intracellular,membrane (4); membrane,secreted (5); secreted,membrane (1); NA (7)
   dplyr::filter(func_prot %in% c("intracellular", "membrane", "secreted")) %>%
   #count(func_prot) %>% DT::datatable()
   dplyr::filter(location == "cis")
 
 
+
+# append number of loci to mapping file
+map_nloci <- st2_map %>%
+  dplyr::select(
+    seqid = SeqID,
+    INTERVAL_LOD_batch1,
+    INTERVAL_LOD_batch2,
+    INTERVAL_CV_batch1,
+    INTERVAL_CV_batch2,
+    CHRIS_LOD,
+    CHRIS_CV,
+    status = uniprot_new_in_somascan7k_vs5k
+  ) %>%
+  #distinct() %>% # ignore multiple seqid
+  summarise(
+    lod_mean = mean(c(INTERVAL_LOD_batch1, INTERVAL_LOD_batch2, CHRIS_LOD)),
+    cv_mean = mean(c(INTERVAL_CV_batch1, INTERVAL_CV_batch2, CHRIS_CV)),
+    status = paste0(unique(status), collapse = ","),
+    .by = seqid
+  ) %>%
+  #filter(cis_or_trans == "cis") %>%
+  left_join(
+    #res %>% distinct(seqid, status, nloci, nloci_cis),
+    map_npqtls,
+    join_by(seqid)
+  ) %>%   # add seqids without any loci
+  mutate(across(c(nloci, npqtl, ncis_pqtl), ~ replace_na(.x, 0)))
 
 
 #-------------------#
@@ -112,6 +186,27 @@ lb_pathway %>%
     .by = status
   )
 
+lb_pathway %>% count(status, ilod_int2) %>% gt::gt()
+
+# HTML table
+kableExtra::kable(format = "simple")
+DT::datatable()
+
+
+lb_pathway %>%
+  group_by(func_prot) %>% #count(conc_miss)
+  summarise(
+    n_sample = n(),
+    n_complete = sum(!is.na(conc_prot)),
+    p_nissing = sum(is.na(conc_prot))/n_sample,
+    mean_conc_func = mean(conc_prot, na.rm=TRUE),
+    sd_conc_func = sd(conc_prot, na.rm=TRUE)
+    )
+
+# desity plot: log10 vs. ln
+lb_pathway %>%
+  ggplot(aes(fill = func_prot, x = conc_prot_log)) +
+  geom_density(alpha = .8)
 
 #-------------------------------#
 # -----   Logistic Model   -----
@@ -125,20 +220,50 @@ fit_logistic <- glm(
   #signal ~ status * location,
   #signal ~ status + zscore,
   #signal ~ status + CHRIS_CV,
-  signal ~ status + func_prot,
+  #signal ~ status + func_prot,
+  #signal ~ status + conc_prot_log,
+  #signal ~ status + conc_prot_log + func_prot,
+  #signal ~ status + ilod_int2,
+  signal ~ status + ilod_chris,
   family = binomial(link='logit'),
   data = lb_pathway
   )
 
-gtsummary::tbl_regression(fit_logistic, exponentiate = TRUE)
+#gtsummary::tbl_regression(fit_logistic, exponentiate = TRUE)
 
-broom::tidy(
-  fit_logistic,
-  conf.int = TRUE,
-  exponentiate = TRUE
-  ) #%>% DT::datatable()
+broom::tidy(fit_logistic, conf.int = TRUE, exponentiate = TRUE)
 
 
+
+
+#-------------------------------#
+# -----    Poisson Model   -----
+#-------------------------------#
+
+fit_logit <- glm(
+  nloci ~ lod_mean,
+  fmily = binomial(link='logit'),
+  data = map_nloci)
+
+fit_poisson <- glm(
+  nloci ~ lod_mean,
+  family = "poisson",
+  data = map_nloci)
+
+broom::tidy(fit_logit)
+gtsummary::tbl_regression(fit_poisson)
+
+# interaction plot
+# We first assess the interaction visually via the plot_model() function:
+
+# plot
+plot_model(
+  m4_inter,
+  type = "pred",
+  terms = c("age", "sex")
+  ci.lvl = NA # remove confidence bands
+  ) +
+  labs(y = "Prob(heart disease)")
 
 
 #-------------------#
