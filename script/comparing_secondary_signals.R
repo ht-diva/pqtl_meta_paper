@@ -124,6 +124,9 @@ lb_pathway <- st2_map %>%
   dplyr::filter(location == "cis")
 
 
+# remove cis loci with non-unique missing indicators per locus/seqid
+lb_missing <- lb_pathway %>% filter(conc_miss %in% c(TRUE, FALSE))
+
 
 # append number of loci to mapping file
 map_nloci <- st2_map %>%
@@ -186,21 +189,21 @@ lb_pathway %>%
     .by = status
   )
 
-lb_pathway %>% count(status, ilod_int2) %>% gt::gt()
 
 # HTML table
 kableExtra::kable(format = "simple")
 DT::datatable()
+gt::gt()
 
-
+# table 6 of docs report
 lb_pathway %>%
   group_by(func_prot) %>% #count(conc_miss)
   summarise(
     n_sample = n(),
-    n_complete = sum(!is.na(conc_prot)),
-    p_nissing = sum(is.na(conc_prot))/n_sample,
-    mean_conc_func = mean(conc_prot, na.rm=TRUE),
-    sd_conc_func = sd(conc_prot, na.rm=TRUE)
+    n_complete = sum(!is.na(conc_prot_log)),
+    p_nissing = sum(is.na(conc_prot_log))/n_sample,
+    mean_conc_func = mean(conc_prot_log, na.rm=TRUE),
+    sd_conc_func = sd(conc_prot_log, na.rm=TRUE)
     )
 
 # desity plot: log10 vs. ln
@@ -229,11 +232,19 @@ fit_logistic <- glm(
   data = lb_pathway
   )
 
+fit_missing <- glm(signal ~ status * conc_miss,
+                   family = binomial(link='logit'),
+                   data = lb_missing)
+
+fit_lod <- glm(signal ~ status + ilod_chris,
+               family = binomial(link='logit'),
+               data = lb_pathway)
+
 #gtsummary::tbl_regression(fit_logistic, exponentiate = TRUE)
 
 broom::tidy(fit_logistic, conf.int = TRUE, exponentiate = TRUE)
-
-
+broom::tidy(fit_missing, conf.int = TRUE, exponentiate = TRUE)
+broom::tidy(fit_lod, conf.int = TRUE, exponentiate = TRUE)
 
 
 #-------------------------------#
