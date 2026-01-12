@@ -20,8 +20,9 @@ seqids_chr2122 <- loci_meta %>%
   mutate(n_loci = n()) %>%
   ungroup() %>%
   filter(chr %in% c(21:22)) %>%
-  #head() %>%
-  pull(seqid) #%>% paste(collapse = "|")
+  head() %>%
+  pull(seqid) %>% 
+  paste(collapse = "|")
 
 # grep -E "seqid.1|seqid.2|...|seqid.52" conf/path_meta_all.txt > conf/meta_loci_chr2122.txt
 
@@ -74,4 +75,86 @@ cojo_join %>%
 
 ggsave(filename = plt_scatter, last_plot(), 
        width = 9.5, height = 5.5, dpi = 300, units = "in")
+
+
+#----------------------------#
+
+# validate genotype including alleles and dosages
+path_dir_old <- "/exchange/healthds/pQTL/INTERVAL/Genetic_QC_files/"
+path_dir_new <- "/scratch/gianmauro.cuccuru/genomics_QC_pipeline/results_interval/"
+path_geno <- "bed/qc_recoded_harmonised/impute_recoded_selected_sample_filter_hq_var_new_id_alleles_"
+headers <- c("CHR", "SNPID", "FID", "POS", "EA", "NEA")
+
+loci_chr2122 <- loci_meta %>% filter(chr %in% c(21:22))
+
+my_row <- 2
+my_chr <- loci_chr2122$chr[my_row]
+my_beg <- loci_chr2122$start[my_row]
+my_end <- loci_chr2122$end[my_row]
+
+file_new <- glue(path_dir_new, path_geno, my_chr, ".bim") %>%
+  fread(col.names = headers) %>%
+  filter(CHR == my_chr, POS > my_beg, POS < my_end) %>%
+  select(POS, SNPID, EA, NEA) %>%
+  distinct(POS, .keep_all = TRUE) # remove duplicate SNPs
+
+file_old <- glue(path_dir_old, path_geno, my_chr, ".bim") %>%
+  fread(col.names = headers) %>%
+  filter(CHR == my_chr, POS > my_beg, POS < my_end) %>%
+  select(POS, SNPID, EA, NEA) %>%
+  distinct(POS, .keep_all = TRUE) # remove duplicate SNPs
+
+# check bim files are identical
+all.equal(file_new, file_old) 
+
+# there are duplicated rows in old SNPs list
+file_old %>% distinct(POS)
+file_new[duplicated(file_new$POS), ]
+file_new[POS == "45202407"]
+
+file_merged <- full_join(
+  file_new,
+  file_old,
+  join_by(POS), #relationship = "many-to-many",
+  suffix = c("_new", "_old"))
+
+
+take_data <- function(path, my_chr, my_beg, my_end){
+  fread(path, col.names = headers) %>%
+    filter(CHR == my_chr, POS > my_beg, POS < my_end) %>%
+    select(POS, SNPID, EA, NEA) %>%
+    distinct(POS, .keep_all = TRUE) # remove duplicate SNPs
+}
+
+compare_pvar <- function(i){
+  
+  my_chr <- loci_chr2122$chr[i]
+  my_beg <- loci_chr2122$start[i]
+  my_end <- loci_chr2122$end[i]
+  
+  file_new <- glue(path_dir_new, path_geno, my_chr, ".bim") %>% take_data(., my_chr, my_beg, my_end)
+  file_old <- glue(path_dir_old, path_geno, my_chr, ".bim") %>% take_data(., my_chr, my_beg, my_end)
+
+  file_merged <- full_join(
+    file_new,
+    file_old,
+    join_by(POS), #relationship = "many-to-many",
+    suffix = c("_new", "_old"))
+
+  my_sum <- file_merged %>% summarise(
+    SNPID = sum(SNPID_new == SNPID_old),
+    EA    = sum(EA_new    == EA_old),
+    NEA   = sum(NEA_new   == NEA_old)
+  )
+
+  tibble(chr = my_chr, start = my_beg, end = my_end,
+         nsnps_new = nrow(file_new),
+         nsnps_old = nrow(file_old)) %>%
+    cbind(my_sum)
+  
+}
+
+
+map_dfr(1:1000, function(i) compare_pvar(i))
+
 
