@@ -140,3 +140,24 @@ ggsave(
   filename = "12-Jan-26_query_of_celf1_gene_distribution.png", 
   height = 11, width = 7.5, dpi = 300
 )
+
+# summarise pleiotrpoy at each gene
+clean_res %>%
+  count(trait, gene, sort = TRUE, name = "n_hits") %>%
+  group_by(trait) %>%
+  mutate(n_hits_trait = sum(n_hits)) %>%
+  group_by(gene) %>%
+  mutate(n_hits_gene = sum(n_hits)) %>%
+  ungroup() %>%
+  filter(n_hits_trait > 3) %>%
+  group_by(gene, trait) %>%
+  arrange(-n_hits) %>%
+  ungroup() %>% 
+  summarise(
+    n_traits = n(),
+    traits = paste0(trait, "(", n_hits ,")", collapse = ","),
+    .by = gene
+  )
+
+
+  
