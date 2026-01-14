@@ -1,0 +1,39 @@
+---
+title: "Report inflation"
+output: html_document
+date: "2026-01-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+```
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+
+```{r report IQR for geneomic inflation factor, echo=TRUE}
+
+# import list of Lambda factors from PWAS 
+path_lambdas <- "/exchange/healthds/pQTL/results/META_CHRIS_INTERVAL/qced_sumstats_digits_not_flipped/inflation_factors_table.tsv"
+
+gwas_qc <- fread(path_lambdas)
+
+lgc_median <- median(gwas_qc$lambda_GC)
+lgc_min <- min(gwas_qc$lambda_GC)
+lgc_max <- max(gwas_qc$lambda_GC)
+
+cat("median:", lgc_median,
+    "\n min:",   lgc_min,
+    "\n max:",   lgc_max)
+
+```
+
+Genomic inflation was well controlled (median λGC = `r lgc_median` (range: `r lgc_min` – `r lgc_max`)).
+
+In the paper (v.2), I included the range as follows:
+Genomic inflation was well controlled (median λGC = 1.005 (range: 0.975–1.094)).
