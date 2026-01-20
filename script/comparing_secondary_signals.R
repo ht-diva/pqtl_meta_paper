@@ -24,7 +24,9 @@ st4_cojo <- st4_cojo %>%
     seqid = SeqID,
     locus = locus_START_END_37,
     location = cis_or_trans,
-    status = uniprot_new_in_somascan7k_vs5k
+    status = uniprot_new_in_somascan7k_vs5k,
+    ncs = `No. of 99% credible set SNPs`,
+    cs_snps = `SNPs in credible set`
   ) #%>% arrange(seqid, locus) %>% print(n=100)
 
 # summarizing COJO results per locus
@@ -44,16 +46,6 @@ res <- st4_cojo %>%
   select(seqid, locus, location, status, nloci, ncis_pqtl, ncojo, signal) %>%
   ungroup() %>% 
   distinct()
-
-
-map_npqtls <- st4_cojo %>%
-  summarise(
-    nloci = n_distinct(locus),
-    npqtl = n(),
-    ncis_pqtl = sum(location == "cis"),        # because 'status' is logical
-    #status = paste0(unique(status), collapse = ","),
-    .by = seqid
-    ) #%>% filter(seqid == "seq.10365.132")
 
 
 # appending Z-scores of index variants
@@ -83,8 +75,8 @@ map_cojo <- st2_map %>%
   filter(location == "cis")
 
 
-# merge maping with locus breaker results 
-lb_pathway <- st2_map %>%
+
+st2_map_4join <- st2_map %>%
   dplyr::select(
     seqid = SeqID,
     concentration = Blood_conc_pgL,
@@ -108,14 +100,17 @@ lb_pathway <- st2_map %>%
     pblod_chris = mean(CHRIS_Percent_under_LOD, na.rm = T),
     .by = seqid
     ) %>%
-  mutate(
+  dplyr::mutate(
     pblod_int1  = replace_na(pblod_int1, 0),
     pblod_int2  = replace_na(pblod_int2, 0),
     pblod_chris = replace_na(pblod_chris, 0),
     ilod_int1 = ifelse(pblod_int1 > 20, "iLOD>20%", "iLOD<20%") %>% factor(levels = c("iLOD<20%", "iLOD>20%")),
     ilod_int2 = ifelse(pblod_int2 > 20, "iLOD>20%", "iLOD<20%") %>% factor(levels = c("iLOD<20%", "iLOD>20%")),
     ilod_chris = ifelse(pblod_chris > 20, "iLOD>20%", "iLOD<20%") %>% factor(levels = c("iLOD<20%", "iLOD>20%"))
-  ) %>%
+  )
+
+# merge mapping with locus-level summary of COJO results
+lb_pathway <- st2_map_4join %>%
   right_join(res, join_by(seqid)) %>%
   # remove loci corresponding to a seqid with multiple locations
   # intracellular,membrane (4); membrane,secreted (5); secreted,membrane (1); NA (7)
@@ -128,32 +123,47 @@ lb_pathway <- st2_map %>%
 lb_missing <- lb_pathway %>% filter(conc_miss %in% c(TRUE, FALSE))
 
 
-# append number of loci to mapping file
-map_nloci <- st2_map %>%
-  dplyr::select(
-    seqid = SeqID,
-    INTERVAL_LOD_batch1,
-    INTERVAL_LOD_batch2,
-    INTERVAL_CV_batch1,
-    INTERVAL_CV_batch2,
-    CHRIS_LOD,
-    CHRIS_CV,
-    status = uniprot_new_in_somascan7k_vs5k
-  ) %>%
-  #distinct() %>% # ignore multiple seqid
-  summarise(
-    lod_mean = mean(c(INTERVAL_LOD_batch1, INTERVAL_LOD_batch2, CHRIS_LOD)),
-    cv_mean = mean(c(INTERVAL_CV_batch1, INTERVAL_CV_batch2, CHRIS_CV)),
-    status = paste0(unique(status), collapse = ","),
-    .by = seqid
-  ) %>%
-  #filter(cis_or_trans == "cis") %>%
-  left_join(
-    #res %>% distinct(seqid, status, nloci, nloci_cis),
-    map_npqtls,
-    join_by(seqid)
-  ) %>%   # add seqids without any loci
-  mutate(across(c(nloci, npqtl, ncis_pqtl), ~ replace_na(.x, 0)))
+
+#**************************************
+#---> as is impossible to reproduce Solene's results, 
+# I do not use below subset anymore ---<
+#**************************************
+
+# map_npqtls <- st4_cojo %>%
+#   summarise(
+#     nloci = n_distinct(locus),
+#     npqtl = n(),
+#     ncis_pqtl = sum(location == "cis"),        # because 'status' is logical
+#     #status = paste0(unique(status), collapse = ","),
+#     .by = seqid
+#   ) #%>% filter(seqid == "seq.10365.132")
+# 
+# # append number of loci to mapping file
+# map_nloci <- st2_map %>%
+#   dplyr::select(
+#     seqid = SeqID,
+#     INTERVAL_LOD_batch1,
+#     INTERVAL_LOD_batch2,
+#     INTERVAL_CV_batch1,
+#     INTERVAL_CV_batch2,
+#     CHRIS_LOD,
+#     CHRIS_CV,
+#     status = uniprot_new_in_somascan7k_vs5k
+#   ) %>%
+#   #distinct() %>% # ignore multiple seqid
+#   summarise(
+#     lod_mean = mean(c(INTERVAL_LOD_batch1, INTERVAL_LOD_batch2, CHRIS_LOD)),
+#     cv_mean = mean(c(INTERVAL_CV_batch1, INTERVAL_CV_batch2, CHRIS_CV)),
+#     status = paste0(unique(status), collapse = ","),
+#     .by = seqid
+#   ) %>%
+#   #filter(cis_or_trans == "cis") %>%
+#   left_join(
+#     #res %>% distinct(seqid, status, nloci, nloci_cis),
+#     map_npqtls,
+#     join_by(seqid)
+#   ) %>%   # add seqids without any loci
+#   mutate(across(c(nloci, npqtl, ncis_pqtl), ~ replace_na(.x, 0)))
 
 
 #-------------------#
@@ -271,7 +281,7 @@ gtsummary::tbl_regression(fit_poisson)
 plot_model(
   m4_inter,
   type = "pred",
-  terms = c("age", "sex")
+  terms = c("age", "sex"),
   ci.lvl = NA # remove confidence bands
   ) +
   labs(y = "Prob(heart disease)")
@@ -447,4 +457,51 @@ lb_pathway %>%
 
 ggsave("02-Dec-25_barplot_new_old_proteins_pathway_cis.jpg",
        plot = last_plot(), width = 9, height = 6, dpi = 300)
+
+
+
+#-------------------------------#
+# -----  Compare CS size   -----
+#-------------------------------#
+
+# merge mapping with Signal-level COJO results
+cis_cs_signal <- st4_cojo %>%
+  mutate(
+    status = ifelse(status, "new", "old") %>% factor(levels = c("old", "new"))
+  ) %>%
+  left_join(
+    st2_map_4join %>% select(seqid, func_prot, conc_prot_log2),
+    join_by(seqid)
+    ) %>%
+  filter(
+    func_prot %in% c("intracellular", "membrane", "secreted"),
+    location == "trans"
+    ) %>%
+  select(seqid, locus, SNPID, status, func_prot, conc_prot_log2, ncs)
+
+
+
+# descriptive table
+st4_cojo %>%
+  filter(location == "cis") %>% 
+  group_by(status) %>%
+  summarise(
+    n_signals = n(),
+    median_ncs = median(ncs),
+    iqr_ncs = IQR(ncs),
+    q1_ncs = quantile(ncs, probs = 0.25),
+    q3_ncs = quantile(ncs, probs = 0.75)
+  )
+
+
+# fit Poisson model
+glm_ncs <- glm(
+  ncs ~ status,
+  family = poisson(link = "log"),
+  data = cis_cs_signal
+)
+
+# model results
+broom::tidy(glm_ncs, exponentiate = TRUE, conf.int = TRUE)
+gtsummary::tbl_regression(glm_ncs, exponentiate = TRUE, conf.int = TRUE)
 
