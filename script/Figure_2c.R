@@ -552,3 +552,57 @@ ggsave(
   paste0(foldname, "/Adams_plot_", type_of_clustering, "_new_8.png"),
   width = 30, height = 20, units = "cm"
 )
+
+# Plot just the subgraph on groups 5, 6, 8
+keep_groups <- c(5, 6, 8)
+nodes_keep  <- V(g_est)[group %in% keep_groups]
+
+cols <- gg_color_hue(3)
+
+community_colors <- c(
+  "5" = cols[1],
+  "6" = cols[2],
+  "8" = cols[3]
+)
+
+g_sub <- induced_subgraph(g_est, vids = nodes_keep)
+tg_sub  <- as_tbl_graph(g_sub)
+layout_sub <- create_layout(tg_sub, layout = "graphopt",charge = 0.0000001, spring.length = 0.01,spring.constant = 0.1)
+p <- ggraph(layout_sub) +
+  geom_edge_link(edge_width = 0.5, alpha = 0.2, color = "gray") +
+  geom_node_point(
+    aes(color = as.factor(group)),
+    shape = 15,
+    size = 4
+  ) +
+  scale_color_manual(values = community_colors, drop = FALSE)+
+  theme_void() +
+  theme(legend.position = "none")
+
+p
+ggsave(p, filename=paste(foldname, "/HighQuality_Network_",type_of_clustering, "_red_v1.png", sep=""), width=8, height=8, dpi=300)
+
+
+community_colors <- setNames(
+  rep("darkgray", 18),
+  as.character(1:18)
+)
+community_colors[c("5", "6", "8")] <- cols[1:3]
+
+
+tg <- as_tbl_graph(g_est)
+layout <- create_layout(tg, layout = 'graphopt',charge = 0.00001, spring.length = 0.01,spring.constant = 0.25) 
+p <- ggraph(layout) +
+  geom_edge_link(edge_width = 0.5, alpha = 0.2, color = "gray") +
+  geom_node_point(aes(
+    color = as.factor(V(g_est)$group),
+    # shape = as.factor(V(g_est)$cis_trans),
+    # fill = ifelse(V(g_est)$cis_trans == "cis", as.factor(V(g_est)$group), "white")
+  ),shape = 15, size = 4) +
+  scale_color_manual(values = community_colors, drop = FALSE)+
+  theme_void() +                                 # Remove background, grid, axes
+  theme(legend.position = "none")                # Remove all legendsp
+p
+ggsave(p, filename=paste(foldname, "/HighQuality_Network_",type_of_clustering, "_red_v2.png", sep=""), width=8, height=8, dpi=300)
+
+
