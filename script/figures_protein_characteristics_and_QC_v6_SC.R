@@ -1,11 +1,11 @@
 #Question Claudia
-#why multigenes removal from all panel (including LOD) and including pQTL-> add them as missing instead of removing them (make sure that legend is clear)
-#why remove NA in below LOD -> wrong percentage -> solved
-#why constraining scale for CV plots? -> currently log scale of percent... ->solved % for sf1  log raw value for the current ones (sf4 sf7)
+#why multigenes removal from all panel (including LOD) and including pQTL-> add them as missing instead of removing them (make sure that legend is clear) DONE
+#why remove NA in below LOD -> wrong percentage -> solved DONE
+#why constraining scale for CV plots? -> currently log scale of percent... ->solved % for sf1  log raw value for the current ones (sf4 sf7) DONE
 #below LOD pattern
-#sum of prot in panel d e f is not equal to the ones from other panels-> remove them OK
-##problem of n in models?
-##binomial model (outcome always 1 0) ->correctly specified, just have to change N in the reporting table
+#sum of prot in panel d e f is not equal to the ones from other panels-> remove them OK DONE
+##problem of n in models? DONE CORRECTED
+##binomial model (outcome always 1 0) ->correctly specified, just have to change N in the reporting table DONE
 #re-add models with QC metrics as outcome (+ heterogenety) -> poisson/ZIP
 
 
@@ -156,8 +156,10 @@ cat(
   "\n"
 )
 #4
-annot_prot <- annot %>%
-  filter(!UniProt_ID %in% proteins_to_exclude)
+annot <- annot %>%
+  mutate(
+    is_multigene = UniProt_ID %in% protein_multigene$UniProt_ID[protein_multigene$has_multigene]
+  )
 
 # 4 multigene proteins, 2 of them also RNA-conflicting
 View(annot_raw[annot_raw$UniProt_ID%in%protein_multigene$UniProt_ID[protein_multigene$has_multigene==TRUE],]) #View excluded raws
@@ -168,11 +170,11 @@ dim(annot) #7375 49 #16 raws excluded
 ## ---------------------------------------------------------
 ## CLEAN RNA ANNOTATIONS (before collapsing)
 ## ---------------------------------------------------------
-table(annot_prot$Secretion.pathway)
-table(annot_prot$RNA.tissue.specificity)
-table(annot_prot$RNA.tissue.distribution)
+table(annot$Secretion.pathway)
+table(annot$RNA.tissue.specificity)
+table(annot$RNA.tissue.distribution)
 # Fix this: RNA tissue expression annotations from the Human Protein Atlas occasionally appeared as missing (‘Not detected’) in Supplementary Table 2
-annot_prot <- annot_prot %>%
+annot <- annot %>%
   mutate(
     RNA.tissue.specificity = ifelse(
       RNA.tissue.specificity %in% c("Not detected", "NA", "", NA),
@@ -183,6 +185,11 @@ annot_prot <- annot_prot %>%
       RNA.tissue.distribution %in% c("Not detected", "NA", "", NA),
       NA,
       RNA.tissue.distribution
+    ),
+    RNA.tissue.distribution = ifelse(
+      RNA.tissue.distribution==("Detected in all"),
+      "Detected in all tissues",
+      RNA.tissue.distribution
     )
   )
 
@@ -190,7 +197,12 @@ annot_prot <- annot_prot %>%
 ## 2. Protein-level summarisation
 ##    One row per UniProt_ID
 ############################################################
-df_uniprot1 <- annot_prot %>%
+df_uniprot1 <- annot %>%
+  mutate(
+    HGNC_Symbol = ifelse(is_multigene, NA_character_, HGNC_Symbol),
+    RNA.tissue.specificity   = ifelse(is_multigene, NA_character_, RNA.tissue.specificity  ),
+    RNA.tissue.distribution   = ifelse(is_multigene, NA_character_, RNA.tissue.distribution  ),
+  ) %>%
   group_by(UniProt_ID) %>%
   summarise(
     HGNC_Symbol             = unique_or_na(HGNC_Symbol),
@@ -263,7 +275,7 @@ df_aptamer <- annot %>%
       levels = c("Present in 5k", "New in 7k")
     )
   )
-dim(df_aptamer) #7285
+dim(df_aptamer) #7285 -> now 7289, we include all aptamers including the ones correspodning to multigenes prot
 
 ## Join cis/no-cis for aptamers (used for Figure 2)
 cis_apt <- pqtl_raw %>%
@@ -294,7 +306,8 @@ transform_LOD <- function(x) {
 }
 
 transform_CV <- function(x) {
-  as.numeric(x) * 100     # convert fraction → %
+  # as.numeric(x) * 100     # convert fraction → %
+  as.numeric(x)     # remove conversion to percent (instead use log scale in plot)
 }
 
 transform_pctLOD <- function(x) {
@@ -346,10 +359,13 @@ make_qc_violin <- function(long_df, ylab, y_limits = NULL,y_scale="linear") {
     group_by(group_lbl, Batch) %>%
     summarise(
       aptamers = n_distinct(SeqID),
-      proteins = n_distinct(UniProt_ID),
+      # proteins = n_distinct(UniProt_ID),
       .groups  = "drop"
     ) %>%
-     mutate(label = paste0(aptamers, " aptamers\n", proteins, " proteins")) 
+     mutate(label = paste0(aptamers, " aptamers\n"
+                           # , proteins, " proteins"
+                           )
+            ) 
 
   counts_center <- counts %>% filter(Batch == "INTERVAL Batch 2") # print only middle since they are all same (non-missing CV and LOD across all cohorts) ??
 
@@ -392,6 +408,7 @@ make_panel1 <- function(df, feature, y_max, valid_levels) {
 
   df_filtered <- df %>%
     group_by(UniProt_ID, HGNC_Symbol, group_lbl) %>%
+    # filter(!is_multigene)%>%
     summarise(
       feature_val = .data[[feature]],
       .groups = "drop"
@@ -445,7 +462,10 @@ make_panel1 <- function(df, feature, y_max, valid_levels) {
     scale_fill_brewer(palette = "Set2", name = NULL) +
     labs(x = NULL, y = "Percentage of proteins") +
     theme_bw(base_size = 14) +
-    theme(legend.position = "bottom")
+    theme(legend.position = "bottom",
+          legend.spacing.y = unit(0.8, "cm"),
+          legend.key.size = unit(0.6, "cm"),
+          legend.text = element_text(size = 8))
 }
 
 if (make_figure1) {
@@ -484,6 +504,7 @@ if (make_figure1) {
 
   summary_counts_g <- df_uniprot1 %>%
     group_by(group_lbl) %>%
+    # filter(!is_multigene)%>%
     summarise(
       proteins_total   = n_distinct(UniProt_ID),
       genes            = n_distinct(HGNC_Symbol),
@@ -552,7 +573,7 @@ long_CV <- reshape_QC(
   transform_fun = transform_CV
 )
 
-p1_e <- make_qc_violin(long_CV, ylab = "CV (% - log scale)", y_scale="log10")
+p1_e <- make_qc_violin(long_CV, ylab = "CV (log scale)", y_scale="log10")
 
 
 
@@ -607,7 +628,7 @@ p1_f <- ggplot(summary_pct,
   scale_y_continuous(limits = c(0, ymax_f),
                      expand = expansion(mult = c(0,0.12))) +
   scale_fill_manual(values = batch_colors) +
-  labs(x = NULL, y = "aptamers with >20% below LOD") +
+  labs(x = NULL, y = "Apts with >20% below LOD") +
   theme_bw(14) + 
   theme(legend.position = "bottom", legend.title    = element_blank())
 
@@ -815,6 +836,7 @@ make_panel2 <- function(df, feature, y_max, valid_levels) {
 
   df_filtered <- df %>%
     group_by(UniProt_ID, HGNC_Symbol, group_lbl, pqtl_group) %>%
+    # filter(!is_multigene)%>%
     summarise(
       feature_val = .data[[feature]],
       .groups = "drop"
@@ -878,7 +900,10 @@ make_panel2 <- function(df, feature, y_max, valid_levels) {
     scale_fill_brewer(palette = "Set2", name = NULL) +
     labs(x = NULL, y = "Percentage of proteins") +
     theme_bw(base_size = 14) +
-    theme(legend.position = "bottom")
+    theme(legend.position = "bottom",
+          legend.spacing.y = unit(0.8, "cm"),
+          legend.key.size = unit(0.6, "cm"),
+          legend.text = element_text(size = 8))
 }
 
 ############################################################
@@ -890,6 +915,7 @@ df_blood2 <- df_uniprot2 %>%
 
 summary_counts_g2 <- df_uniprot2 %>%
   group_by(pqtl_group, group_lbl) %>%
+  # filter(!is_multigene)%>%
   summarise(
     proteins_total   = n_distinct(UniProt_ID),
     genes            = n_distinct(HGNC_Symbol),
@@ -938,23 +964,25 @@ p2_g <- ggplot(df_blood2,
 
 reshape_QC_strat <- function(df, qc_col) {
   df %>%
-    select(SeqID, UniProt_ID, group_lbl, pqtl_group, {{ qc_col }}) %>%
-    rename(value = {{ qc_col }}) %>%
-    filter(!is.na(value))
+    select(SeqID, UniProt_ID, group_lbl, pqtl_group, {{ qc_col }}) 
+    names(df)[names(df) == qc_col] <- "value"
+ df%>%   filter(!is.na(value))
 }
 
-make_qc_violin_strat <- function(long_df, ylab, y_limits = NULL) {
+make_qc_violin_strat <- function(long_df, ylab, y_limits = NULL,y_scale="linear") {
 
   counts <- long_df %>%
     group_by(pqtl_group, group_lbl) %>%
     summarise(
       aptamers = n_distinct(SeqID),
-      proteins = n_distinct(UniProt_ID),
-      label = paste0(aptamers, " aptamers\n", proteins, " proteins"),
+      # proteins = n_distinct(UniProt_ID),
+      label = paste0(aptamers, " aptamers\n"
+                     # , proteins, " proteins"
+                     ),
       .groups = "drop"
     )
 
-  ggplot(long_df, aes(x = group_lbl, y = value, fill = group_lbl)) +
+  p<-ggplot(long_df, aes(x = group_lbl, y = value, fill = group_lbl)) +
     geom_violin(alpha = 0.5, scale = "area") +
     geom_boxplot(width = 0.12, outlier.size = 0.4) +
     geom_text(
@@ -964,12 +992,23 @@ make_qc_violin_strat <- function(long_df, ylab, y_limits = NULL) {
       inherit.aes = FALSE
     ) +
     facet_wrap(~ pqtl_group, nrow = 1) +
-    scale_y_continuous(limits = y_limits,
-                       expand = expansion(mult = c(0.02, 0.20))) +
     scale_fill_manual(values = protein_panel_colors, name = NULL) +
     labs(x = NULL, y = ylab) +
     theme_bw(14) +
     theme(legend.position = "none")
+  if (y_scale == "log10") {
+    p <- p +
+      scale_y_log10(
+        expand = expansion(mult = c(0.01, 0.10))
+      )
+  } else {
+    p <- p +
+      scale_y_continuous(
+        limits = y_limits,
+        expand = expansion(mult = c(0.01, 0.10))
+      )
+  }
+  return(p)
 }
 
 ############################################################
@@ -983,7 +1022,7 @@ if (make_figure2) {
 
   p2_b <- make_panel2(df_uniprot2,
                       "RNA.tissue.distribution", 105,
-                      c("Detected in all","Detected in many",
+                      c("Detected in all tissues","Detected in many",
                         "Detected in some","Detected in single"))
 
   p2_c <- make_panel2(df_uniprot2,
@@ -991,11 +1030,11 @@ if (make_figure2) {
                       c("Group enriched","Low tissue specificity",
                         "Tissue enhanced","Tissue enriched"))
 
-long_LOD2 <- reshape_QC_strat(apt_master, LOD_log_mean)
+long_LOD2 <- reshape_QC_strat(apt_master, "LOD_log_mean")
 p2_d <- make_qc_violin_strat(long_LOD2, "LOD (log10 RFU)")
 
-long_CV2 <- reshape_QC_strat(apt_master, CV_mean_pct)
-p2_e <- make_qc_violin_strat(long_CV2, "CV (%)", y_limits = c(0, 50))
+long_CV2 <- reshape_QC_strat(apt_master, "CV_mean_pct")
+p2_e <- make_qc_violin_strat(long_CV2, "CV - log scale", y_scale="log10")
 
 p2_f <- apt_master %>%
   filter(!is.na(pct_underLOD_mean)) %>%   # critical fix
@@ -1016,7 +1055,7 @@ p2_f <- apt_master %>%
   geom_text(aes(label = label), vjust = -0.1, size = 3) +
   facet_wrap(~ pqtl_group, nrow = 1) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
-  labs(x = NULL, y = "apts with >20% below LOD") +
+  labs(x = NULL, y = "Apts with >20% below LOD") +
   theme_bw(14) +
   theme(legend.position = "none")
 
@@ -1080,7 +1119,7 @@ if (run_models) {
     !is.na(pct_underLOD_mean),
     !is.na(CV_mean_pct)
   )
-
+  n_obs <- nrow(apt_for_model)
   # sanity checks (should show both TRUE/FALSE)
   # Modeling universe:
   # QC-passing aptamers with non-missing mean QC metrics
@@ -1250,7 +1289,7 @@ supp_models <- supp_models %>%
     module = "cis_discovery",
     outcome = ifelse(grepl("^cis_", model), "has_cis_pqtl", "has_any_pqtl"),
     analysis_unit = "SeqID (all QC-passing aptamers)",
-    n = stats::nobs(all_models[[1]])  # optional; or compute per-model below
+    n = n_obs  
   )
 
   write.csv(
