@@ -4,6 +4,7 @@ path_eqtl_prrx1 <- "/project/cdh/gtex/data/Heart_Left_Ventricle/Heart_Left_Ventr
 path_eqtl_interval <- "/exchange/healthds/pQTL/INTERVAL/summary_stats/eQTL/cis/INTERVAL_eQTL_nominal_chr1.tsv"
 path_eqtl_trans <- "/exchange/healthds/pQTL/INTERVAL/summary_stats/eQTL/trans/INTERVAL_trans_eQTL_summary_statistics_1e5.tsv"
 path_eqtl_b37 <- "/scratch/dariush.ghasemi/projects/pqtl_liftover/results/vcf/output_positions_GRCh37.txt"
+path_geno_gtex <- "/exchange/healthds/private/GTEXv8_FUSION/GTEx.WGS.838.passOnly.geno0.05.hwe0.00001.dbsnp.SNPsOnly.NoAmbig_1.bim"
 
 
 
@@ -13,6 +14,31 @@ path_eqtl_b37 <- "/scratch/dariush.ghasemi/projects/pqtl_liftover/results/vcf/ou
 # eQTL locus in GTEx:
 #   - GRCh37: chr1:169632033-171631688
 #   - GRCh38: chr1:169662795-171662548
+
+
+#----------------------------------------#
+#-----     Store GTEx eQTLs RSID    -----
+#----------------------------------------#
+
+# subset region (GTEx genotype in build 38 -- bed/bim/fam)
+gtex_geno <- fread(
+  path_geno_gtex,
+  col.names = c("chr", "rsid", "distance", "pos", "ALT", "REF"),
+  colClasses = c(rep("character", 3), "integer", rep("character", 2))
+)
+
+prrx1_snps <- gtex_geno %>%
+  filter(
+    between(pos, 169662795, 171662548)
+    #chr == 1, pos >= 169662795 & pos <= 171662548
+  )
+
+# Store list of SNP ids without multi-allelics
+prrx1_snps %>%
+  select(rsid) %>%
+  write.table(
+    "/scratch/dariush.ghasemi/projects/pqtl_susie/plink_ld/prrx1_eqtls_gtex_v8.list",
+    quote = F, row.names = F, col.names = F)
 
 
 #----------------------------------------#
