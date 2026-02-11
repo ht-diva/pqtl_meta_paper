@@ -151,7 +151,7 @@ proteins_to_exclude <- protein_flags %>%
   pull(UniProt_ID)
 
 cat(
-  "Total proteins excluded as multi-gene complexes:",
+  "Total proteins flagged as multi-gene complexes:",
   length(proteins_to_exclude),
   "\n"
 )
@@ -771,17 +771,23 @@ df_qc_summary <- df_aptamer %>%
       transform_CV(INTERVAL_CV_batch1),
       transform_CV(INTERVAL_CV_batch2),
       transform_CV(CHRIS_CV)
-    ), na.rm = TRUE),
-
-    pct_underLOD_mean = rowMeans(cbind(
-      INTERVAL_Percent_under_LOD_batch1,
-      INTERVAL_Percent_under_LOD_batch2,
-      CHRIS_Percent_under_LOD
-    ), na.rm = TRUE)
-  ) %>%
+    ), na.rm = TRUE) ,
+    # 
+    # pct_underLOD_mean = rowMeans(cbind(
+    #   INTERVAL_Percent_under_LOD_batch1,
+    #   INTERVAL_Percent_under_LOD_batch2,
+    #   CHRIS_Percent_under_LOD
+    # ), na.rm = TRUE)
+    INTERVAL_Percent_under_LOD_batch1 = ifelse(is.na(INTERVAL_Percent_under_LOD_batch1),0,INTERVAL_Percent_under_LOD_batch1),
+    INTERVAL_Percent_under_LOD_batch2 = ifelse(is.na(INTERVAL_Percent_under_LOD_batch2),0,INTERVAL_Percent_under_LOD_batch2),
+    CHRIS_Percent_under_LOD = ifelse(is.na(CHRIS_Percent_under_LOD),0,CHRIS_Percent_under_LOD)) %>%
   select(
     SeqID, UniProt_ID, HGNC_Symbol, aptamer_new, group_lbl,
-    LOD_log_mean, CV_mean_pct, pct_underLOD_mean
+    LOD_log_mean, CV_mean_pct,
+    #pct_underLOD_mean
+    INTERVAL_Percent_under_LOD_batch1,
+    INTERVAL_Percent_under_LOD_batch2,
+    CHRIS_Percent_under_LOD
   )
 
 ############################################################
@@ -1036,28 +1042,79 @@ p2_d <- make_qc_violin_strat(long_LOD2, "LOD (log10 RFU)")
 long_CV2 <- reshape_QC_strat(apt_master, "CV_mean_pct")
 p2_e <- make_qc_violin_strat(long_CV2, "CV - log scale", y_scale="log10")
 
-p2_f <- apt_master %>%
-  filter(!is.na(pct_underLOD_mean)) %>%   # critical fix
-  mutate(high = pct_underLOD_mean > 20) %>%
-  group_by(pqtl_group, group_lbl) %>%
+p2_f_data <- apt_master %>%
+  select(SeqID, UniProt_ID, group_lbl, pqtl_group,
+         INTERVAL_Percent_under_LOD_batch1,
+         INTERVAL_Percent_under_LOD_batch2,
+         CHRIS_Percent_under_LOD) %>%
+  pivot_longer(
+    cols = c(INTERVAL_Percent_under_LOD_batch1,
+             INTERVAL_Percent_under_LOD_batch2,
+             CHRIS_Percent_under_LOD),
+    names_to = "Study",
+    values_to = "Percent_under_LOD"
+  ) %>%
+  mutate(
+    Study = factor(Study,
+                   levels = c("INTERVAL_Percent_under_LOD_batch1",
+                              "INTERVAL_Percent_under_LOD_batch2",
+                              "CHRIS_Percent_under_LOD"),
+                   labels = c("INTERVAL Batch 1", "INTERVAL Batch 2", "CHRIS")),
+    high = Percent_under_LOD > 20
+  ) 
+# %>%
+#   filter(!is.na(Percent_under_LOD))
+dim(p2_f_data)
+p2_f_summary <- p2_f_data %>%
+  group_by(pqtl_group, group_lbl, Study) %>%
   summarise(
     total = n_distinct(SeqID),
-    n_hi  = n_distinct(SeqID[high]),
-    pct   = 100 * n_hi / total,
-    label = paste0(
-      n_hi, "/", total, "\n(",
-      sprintf("%.1f", pct), "%)"
-    ),
+    n_hi = n_distinct(SeqID[high]),
+    pct = 100 * n_hi / total,
+    label = paste0(n_hi, "/", total, "\n(", sprintf("%.1f", pct), "%)"),
     .groups = "drop"
-  ) %>%
-  ggplot(aes(x = group_lbl, y = pct, fill = group_lbl)) +
-  geom_col(width = 0.55) +
-  geom_text(aes(label = label), vjust = -0.1, size = 3) +
+  )
+# <- apt_master %>%
+#   filter(!is.na(pct_underLOD_mean)) %>%   # critical fix
+#   mutate(high = pct_underLOD_mean > 20) %>%
+#   group_by(pqtl_group, group_lbl) %>%
+#   summarise(
+#     total = n_distinct(SeqID),
+#     n_hi  = n_distinct(SeqID[high]),
+#     pct   = 100 * n_hi / total,
+#     label = paste0(
+#       n_hi, "/", total, "\n(",
+#       sprintf("%.1f", pct), "%)"
+#     ),
+#     .groups = "drop"
+#   ) %>%
+#   ggplot(aes(x = group_lbl, y = pct, fill = group_lbl)) +
+#   geom_col(width = 0.55) +
+#   geom_text(aes(label = label), vjust = -0.1, size = 3) +
+#   facet_wrap(~ pqtl_group, nrow = 1) +
+#   scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+#   labs(x = NULL, y = "Apts with >20% below LOD") +
+#   theme_bw(14) +
+#   theme(legend.position = "none")
+batch_colors <- c(
+  "INTERVAL Batch 1" = "#1f78b4",
+  "INTERVAL Batch 2" = "#a6cee3",
+  "CHRIS"            = "#ff7f00"
+)
+p2_f_summary$Study <- factor(
+  p2_f_summary$Study,
+  levels = c("INTERVAL Batch 1", "INTERVAL Batch 2", "CHRIS")
+)
+
+p2_f<-  ggplot(p2_f_summary,aes(x = group_lbl, y = pct, fill = Study)) +
+  geom_col(position = position_dodge(width = 0.7),width = 0.55) +
+  geom_text(aes(label = label), position = position_dodge(width = 0.7),vjust = -0.1, size = 2) +
   facet_wrap(~ pqtl_group, nrow = 1) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
   labs(x = NULL, y = "Apts with >20% below LOD") +
+  scale_fill_manual(values = batch_colors) +
   theme_bw(14) +
-  theme(legend.position = "none")
+theme(legend.position = "bottom", legend.title    = element_blank())
 
   row1_f2 <- plot_grid(p2_a, p2_d, ncol = 2,
                        labels = c("a.", "d."),
@@ -1076,7 +1133,7 @@ p2_f <- apt_master %>%
                        ncol = 1,
                        rel_heights = c(1.05, 1.05, 1.05, 1, 0.25))
 
-  ggsave("Figure_2_FINAL.png", figure2,
+  ggsave("Figure_2_FINAL_batch.png", figure2,
          width = 13, height = 15, dpi = 300)
 
   cat("Figure 2 saved as Figure_2_FINAL.png\n")
