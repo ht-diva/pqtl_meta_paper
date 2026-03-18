@@ -196,9 +196,11 @@ communities <- communities %>%
 
 communities_adam_plot <- communities %>%
   select(SNPID, bp_cum_map, group, cis_or_trans, HARMONIZED_GENE_NAME) %>%
-  mutate(POS = as.numeric(stringr::word(SNPID, 2, sep = ":")))
-communities_adam_plot$group <- as.factor(communities_adam_plot$group)
-
+  mutate(POS = as.numeric(stringr::word(SNPID, 2, sep = ":"))) %>%
+  mutate(
+    group = ifelse(is.na(group), "Not colocalized signals", as.character(group)),
+    group = factor(group, levels = c("1", "Not colocalized signals"))
+  )
 gg_color_hue <- function(n) {
   hues = seq(15, 375, length = n + 1)
   hcl(h = hues, l = 65, c = 100)[1:n]
@@ -225,10 +227,10 @@ p <- ggplot(
   
   scale_color_manual(
     values = c("1" = gg_color_hue(1), 
-               "Not connected" = "gray"),
+               "Not colocalized signals" = "gray"),
     name = "Communities",
     labels = c("1" = "2:27730940:C:T", 
-               "Not connected" = "Not colocalized signals")
+               "Not colocalized signals" = "Not colocalized signals")
   ) +
   
   # change square (15) to triangle (17)
@@ -273,7 +275,7 @@ p <- ggplot(
   )
 p
 plot_name <- paste0(foldname, "/Regional_plot_", chr_hotspot,"_", sel_hotspot,".svg")
-ggsave(plot_name, plot = p, width = 30, height = 20, units = "cm")
+ggsave(plot_name, plot = p, width = 30, height = 23, units = "cm")
 
 
 num_colors <- length(unique(V(g_est)$group))
@@ -299,6 +301,128 @@ ggsave(p,
        height=8,
        dpi=300)
 
+p_net <- ggraph(layout) +
+  geom_edge_link(edge_width = 0.5, alpha = 0.2, color = "gray") +
+  
+  geom_node_point(
+    aes(
+      color = factor(group)
+    ),
+    fill="white",
+    shape = 21,
+    size = 3.5,
+    stroke = 1.1
+  ) +
+  
+  scale_color_manual(
+    name = "Communities",
+    values = palette,
+    labels = c(
+      "1" = "2:27730940:C:T"
+    )
+  ) +
+  
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+p_net
+ggsave(
+  filename = paste0(foldname, "/Network_plot_", chr_hotspot, "_", sel_hotspot, "_nodes_names.svg"),
+  plot = p_net,
+  width = 10,
+  height = 10,
+  dpi = 300
+)
+
+lead_snp_map <- c(
+  "1" = "2:27730940:C:T"
+)
+
+node_meta <- communities %>%
+  transmute(
+    node_name = nodes,
+    group_meta = as.character(group),
+    cis_or_trans = cis_or_trans,
+    HARMONIZED_GENE_NAME = HARMONIZED_GENE_NAME
+  ) %>%
+  distinct(node_name, .keep_all = TRUE) %>%
+  mutate(
+    snp_id = sub("^[^:]+:", "", node_name),
+    highlight_fill = group_meta %in% names(lead_snp_map) & snp_id == lead_snp_map[group_meta],
+    label_node = group_meta %in% c("1") & cis_or_trans == "cis" & !is.na(HARMONIZED_GENE_NAME)
+  )
+
+tg <- as_tbl_graph(g_est) %>%
+  activate(nodes) %>%
+  left_join(node_meta, by = c("name" = "node_name")) %>%
+  mutate(
+    group = ifelse(is.na(group), "Other", group),
+    filled_group = ifelse(highlight_fill, group, NA_character_)
+  )
+community_cols <- c(
+  "1" = palette
+)
+layout <- create_layout(tg, layout = "graphopt")
+
+p_net <- ggraph(layout) +
+  geom_edge_link(edge_width = 0.5, alpha = 0.2, color = "gray") +
+  
+  geom_node_point(
+    aes(
+      color = factor(group),
+      fill = filled_group
+    ),
+    shape = 21,
+    size = 3.5,
+    stroke = 1.1
+  ) +
+  
+  geom_node_text(
+    data = layout %>% filter(label_node),
+    aes(label = HARMONIZED_GENE_NAME),
+    repel = TRUE,
+    size = 3.5,
+    point.padding = unit(0.2, "lines"),
+    box.padding = unit(0.35, "lines"),
+    max.overlaps = Inf
+  ) +
+  
+  scale_color_manual(
+    name = "Communities",
+    values = community_cols,
+    labels = c(
+      "1" = "2:27730940:C:T",
+      "Other" = "Other nodes"
+    )
+  ) +
+  
+  scale_fill_manual(
+    values = c(
+      "1" = gg_color_hue(1)
+    ),
+    na.value = "white",
+    guide = "none"
+  ) +
+  
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+p_net
+ggsave(
+  filename = paste0(foldname, "/Network_plot_", chr_hotspot, "_", sel_hotspot, "_nodes_names_fill_by_top_cond_snp.svg"),
+  plot = p_net,
+  width = 10,
+  height = 10,
+  dpi = 300
+)
 
 #################################################
 ## Figure 2c
@@ -512,13 +636,13 @@ communities_res <- communities_adam_plot %>%
     Communities_recode = case_when(
       Communities== "6" ~ "3:186459227:A:G",  
       Communities== "1" ~ "3:186393786:A:G",  
-      Communities== "12" ~ "3:186449122:A:G",  
+      Communities== "12" ~ "3:186445052:G:T",  
       Communities == "Not connected"  ~ "Not colocalized signals",
       TRUE ~ "Others"                                   
     ),
     Communities_recode = factor(
       Communities_recode,
-      levels = c("3:186459227:A:G","3:186393786:A:G","3:186449122:A:G","Others","Not colocalized signals")
+      levels = c("3:186459227:A:G","3:186393786:A:G","3:186445052:G:T","Others","Not colocalized signals")
     )
   )
 
@@ -526,7 +650,7 @@ communities_res <- communities_adam_plot %>%
 community_colors <- c(
   "3:186459227:A:G" = gg_color_hue(3)[1],           # blue
   "3:186393786:A:G" = gg_color_hue(3)[2],           # green
-  "3:186449122:A:G" = gg_color_hue(3)[3],           # red
+  "3:186445052:G:T" = gg_color_hue(3)[3],           # red
   "Others" = "darkgrey",
   "Not colocalized signals" = "lightgrey"
 )
@@ -610,7 +734,7 @@ ggsave(
   paste0(foldname, "/Regional_plot_", chr_hotspot,"_", sel_hotspot,".svg"),
   plot = p,
   width = 30,
-  height = 20,
+  height = 23,
   units = "cm"
 )
 
@@ -648,7 +772,174 @@ ggsave(p,
 
 
 
+# communities of interest
+highlight_map <- c(
+  "6"  = "3:186459227:A:G",
+  "1"  = "3:186393786:A:G",
+  "12" = "3:186445052:G:T"
+)
 
+# Build node annotation table from the regional-plot data
+node_meta <- communities_res %>%
+  transmute(
+    node_name = nodes,
+    group_meta = as.character(Communities),
+    cis_or_trans = cis_or_trans,
+    HARMONIZED_GENE_NAME = HARMONIZED_GENE_NAME
+  ) %>%
+  distinct(node_name, .keep_all = TRUE) %>%
+  mutate(
+    snp_id = sub("^[^:]+:", "", node_name),
+    highlight_fill = case_when(
+      group_meta %in% names(highlight_map) & snp_id == highlight_map[group_meta] ~ TRUE,
+      TRUE ~ FALSE
+    ),
+    label_node = group_meta %in% c("1", "6", "12") & cis_or_trans == "cis" & !is.na(HARMONIZED_GENE_NAME)
+  )
 
+tg <- as_tbl_graph(g_est) %>%
+  activate(nodes) %>%
+  left_join(node_meta, by = c("name" = "node_name")) %>%
+  mutate(
+    group = as.character(group),
+    group = ifelse(is.na(group), "Other", group),
+    
+    # outline colors by community
+    plot_color = case_when(
+      group == "6"  ~ gg_color_hue(3)[1],
+      group == "1"  ~ gg_color_hue(3)[2],
+      group == "12" ~ gg_color_hue(3)[3],
+      TRUE ~ "darkgray"
+    ),
+    
+    # fill only the representative SNP of each highlighted community
+    plot_fill = case_when(
+      highlight_fill & group == "6"  ~ gg_color_hue(3)[1],
+      highlight_fill & group == "1"  ~ gg_color_hue(3)[2],
+      highlight_fill & group == "12" ~ gg_color_hue(3)[3],
+      TRUE ~ "white"
+    )
+  )
 
+layout <- create_layout(tg, layout = "graphopt", charge = 0.0001)
+p_net <- ggraph(layout) +
+  geom_edge_link(edge_width = 0.5, alpha = 0.2, color = "gray") +
+  
+  geom_node_point(
+    aes(
+      color = factor(group),
+      fill = ifelse(highlight_fill, as.character(group), NA)
+    ),
+    shape = 21,
+    size = 3.5,
+    stroke = 1.1
+  ) +
+  
+  geom_node_text(
+    data = layout %>% filter(label_node),
+    aes(label = HARMONIZED_GENE_NAME),
+    repel = TRUE,
+    size = 3.5,
+    point.padding = unit(0.2, "lines"),
+    box.padding = unit(0.35, "lines"),
+    max.overlaps = Inf
+  ) +
+  
+  scale_color_manual(
+    name = "Communities",
+    values = c(
+      "6" = gg_color_hue(3)[1],
+      "1" = gg_color_hue(3)[2],
+      "12" = gg_color_hue(3)[3],
+      "Other" = "darkgray"
+    ),
+    labels = c(
+      "6" = "3:186459227:A:G",
+      "1" = "3:186393786:A:G",
+      "12" = "3:186445052:G:T",
+      "Other" = "Other nodes"
+    )
+  ) +
+  
+  # 🔹 Fill (no legend)
+  scale_fill_manual(
+    values = c(
+      "6" = gg_color_hue(3)[1],
+      "1" = gg_color_hue(3)[2],
+      "12" = gg_color_hue(3)[3]
+    ),
+    na.value = "white",
+    guide = "none"  
+  ) +
+  
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+p_net
+ggsave(
+  filename = paste0(foldname, "/Network_plot_", chr_hotspot, "_", sel_hotspot, "_nodes_names_fill_by_top_cond_snp.svg"),
+  plot = p_net,
+  width = 10,
+  height = 10,
+  dpi = 300
+)
+
+p_net <- ggraph(layout) +
+  geom_edge_link(edge_width = 0.5, alpha = 0.2, color = "gray") +
+  
+  geom_node_point(
+    aes(
+      color = factor(group)
+    ),
+    fill="white",
+    shape = 21,
+    size = 3.5,
+    stroke = 1.1
+  ) +
+  
+  geom_node_text(
+    data = layout %>% filter(label_node),
+    aes(label = HARMONIZED_GENE_NAME),
+    repel = TRUE,
+    size = 3.5,
+    point.padding = unit(0.2, "lines"),
+    box.padding = unit(0.35, "lines"),
+    max.overlaps = Inf
+  ) +
+  
+  scale_color_manual(
+    name = "Communities",
+    values = c(
+      "6" = gg_color_hue(3)[1],
+      "1" = gg_color_hue(3)[2],
+      "12" = gg_color_hue(3)[3],
+      "Other" = "darkgray"
+    ),
+    labels = c(
+      "6" = "3:186459227:A:G",
+      "1" = "3:186393786:A:G",
+      "12" = "3:186445052:G:T",
+      "Other" = "Other nodes"
+    )
+  ) +
+  
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+p_net
+ggsave(
+  filename = paste0(foldname, "/Network_plot_", chr_hotspot, "_", sel_hotspot, "_nodes_names.svg"),
+  plot = p_net,
+  width = 10,
+  height = 10,
+  dpi = 300
+)
 
