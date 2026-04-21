@@ -4,26 +4,44 @@ library(data.table)
 library(tidyverse)
 
 # inputs
-path_ld <- "/scratch/dariush.ghasemi/projects/ld_pipe/results/communities/ld/"
-path_comun <- "/scratch/dariush.ghasemi/projects/ld_pipe/config/Hotspot_Community_Summary_Final_1.csv"
+path_ld <- "/scratch/dariush.ghasemi/projects/ld_pipe/results/commun_ld/ld/"
+path_comun <- "/scratch/dariush.ghasemi/projects/ld_pipe/config/Hotspot_Community_Summary_Final_21Apr26.csv"
 
 # outputs (save to Dariush home directory)
 out_png   <- "18-Sep-25_ld_plot_communities_all_conditional_snps.png"
 out_pdf_a <- "18-Sep-25_ld_plot_communities_all_cojo_snps_group_a.pdf"
 out_pdf_b <- "18-Sep-25_ld_plot_communities_all_cojo_snps_group_b.pdf"
+out_pdf   <- "20-Apr-26_ld_plot_communities_ld_pruned.pdf"
 
 
 #---------------------------------------------#
 #-----         LD plot PNG (test)      ------- 
 #---------------------------------------------#
 
-hotspot_files
+
 test_hotspot <- "chr12_100_105"
 
 ld_hotspot1 <- fread(glue(path_ld, test_hotspot, ".ld")) #"chr2_0_5.ld"
 
 # read communities file
 comunities <- fread(path_comun)
+
+
+# ------   sort hotspots   -----
+
+# sort hotspots for PDF
+hotspot_dic <- comunities %>%
+  distinct(hotspot, hotspot2) %>%
+  dplyr::mutate(
+    file = str_c(hotspot2, ".ld"),
+    chr   = as.integer(str_match(file, "^chr(\\d+)_")[,2]),
+    start = as.integer(str_match(file, "^chr\\d+_(\\d+)_")[,2]),
+    end   = as.integer(str_match(file, "^chr\\d+_\\d+_(\\d+)\\.ld$")[,2])
+  )
+
+hotspot_sorted <- hotspot_dic %>%
+  arrange(chr, start, end) %>%
+  pull(file)
 
 
 # ------   data wrangling   -----
@@ -41,7 +59,7 @@ ld_diagonal <- tibble(SNP_A = snps) %>%
     SNP_B = SNP_A,
     R2 = 1
   ) %>%
-  select(CHR_A, BP_A, SNP_A, ends_with("_B"), R2)
+  dplyr::select(CHR_A, BP_A, SNP_A, ends_with("_B"), R2)
 
 # missing LD segment
 ld_missing <- ld_hotspot1 %>% 
@@ -52,14 +70,14 @@ ld_missing <- ld_hotspot1 %>%
 
 # Extract SNPs and communities for the input hotspot
 comunities_tidy <- comunities[hotspot2 == test_hotspot, ] %>%
-  mutate(
+  dplyr::mutate(
     cojo_snp = str_remove_all(all_cond_SNP, " "),
     community = str_remove_all(community_id, "Community_") %>% as.integer()
     #C_A = as.integer(str_match(community_A, "(\\d+)")[,1]),
     #C_B = as.integer(str_match(community_B, "(\\d+)")[,1]),
   ) %>% 
-  select(community, cojo_snp) %>%
-  separate_rows(cojo_snp, sep = ",|;") %>% # separate communities with multiple conditional SNPs
+  dplyr::select(community, cojo_snp) %>%
+  tidyr::separate_rows(cojo_snp, sep = ",|;") %>% # separate communities with multiple conditional SNPs
   distinct()
 
 
@@ -157,6 +175,16 @@ corrplot.mixed(
 #-----          LD plot in PDF         ------- 
 #---------------------------------------------#
 
+get_fontsize <- function(n) {
+  max_size <- 6
+  min_size <- 1.5
+  
+  size <- max_size / sqrt(n / 10)
+  size <- max(min_size, min(size, max_size))
+  
+  return(size)
+}
+
 # function to draw LD matrix plot 
 create_ldplot <- function(ld_file){
   
@@ -204,7 +232,7 @@ create_ldplot <- function(ld_file){
     ) %>% 
     select(community, cojo_snp) %>%
     # separate communities with multiple conditional SNPs
-    separate_rows(cojo_snp, sep = ",|;") %>%
+    tidyr::separate_rows(cojo_snp, sep = ",|;") %>%
     distinct()  # remove duplicated SNPs in a community
 
   
@@ -231,6 +259,10 @@ create_ldplot <- function(ld_file){
   # Extract order of labels
   snp_order <- snp_labels$label
   
+  # estimate label size
+  nsnp <- length(snp_labels$label)
+  font_size <- get_fontsize(nsnp)
+  
   # Heatmap
   ld_long %>%
     # create and sort pairs of SNP + community for x- and y-axis
@@ -238,11 +270,12 @@ create_ldplot <- function(ld_file){
       snpcom_a = str_c(SNP_A, " (", community_A, ")"),
       snpcom_b = str_c(SNP_B, " (", community_B, ")"),
       label_a  = factor(snpcom_a, levels = snp_order),
-      label_b  = factor(snpcom_b, levels = snp_order)
+      label_b  = factor(snpcom_b, levels = snp_order),
+      my_rsq   = ifelse(rsquare > 20, rsquare, "")
     ) %>%
     ggplot(aes(x = label_a, y = label_b, fill = rsquare)) +
     geom_tile(color = "black") +
-    geom_text(aes(label = rsquare), size=3) +
+    geom_text(aes(label = my_rsq), size = font_size) +
     scale_fill_gradient(low = "white", high = "red") +
     #scale_fill_viridis_c(option = "plasma", limits = c(0,1)) +
     scale_x_discrete(position = "top") +
@@ -269,16 +302,18 @@ create_ldplot <- function(ld_file){
 #----------------------#
 # create LD plots for 19 hotspots
 pdf(
-  out_pdf_b,
+  out_pdf,
   #width = 13, height = 12 # group (a)
   width = 23, height = 22 # group (b)
   )
 
-map(
+purrr::map(
   #hotspot_sorted[c(1,3,4,6,8:11,13:21)], # group (a)
-  hotspot_sorted[c(2,5,7,12,22)],        # group (b)
+  #hotspot_sorted[c(2,5,7,12,22)],        # group (b)
+  hotspot_sorted,
   create_ldplot
   )
+
 
 dev.off()
 
